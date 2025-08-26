@@ -90,8 +90,8 @@ class Plugin {
         // Hook into post publication for deal notifications
         add_action('publish_post', [$this->notification_engine, 'handle_new_deal'], 10, 2);
         
-        // Add admin menu - priority 10 (default) to run before Settings submenu
-        add_action('admin_menu', [$this, 'add_admin_menu'], 10);
+        // Add admin menu
+        add_action('admin_menu', [$this, 'add_admin_menu']);
         
         // Enqueue scripts
         add_action('wp_enqueue_scripts', [$this, 'enqueue_scripts']);
@@ -112,17 +112,15 @@ class Plugin {
             30
         );
         
-        // Add submenu for dashboard (rename the first item)
+        // Add Settings as submenu directly here
         add_submenu_page(
             'deal-notifications',
-            __('Dashboard', 'deal-notification-engine'),
-            __('Dashboard', 'deal-notification-engine'),
+            __('Settings', 'deal-notification-engine'),
+            __('Settings', 'deal-notification-engine'),
             'manage_options',
-            'deal-notifications',
-            [$this, 'render_admin_page']
+            'deal-notifications-settings',
+            [$this->settings, 'render_settings_page']
         );
-        
-        // Settings submenu is added by Settings class
     }
     
     /**
@@ -159,9 +157,15 @@ class Plugin {
             </div>
             
             <div class="card">
-                <h2><?php echo esc_html__('Telegram Bot Settings', 'deal-notification-engine'); ?></h2>
-                <p><?php echo esc_html__('Bot Username:', 'deal-notification-engine'); ?> <code>@YourBotName</code></p>
-                <p><small><?php echo esc_html__('Configure your bot token in wp-config.php: define("DNE_TELEGRAM_BOT_TOKEN", "your-token");', 'deal-notification-engine'); ?></small></p>
+                <h2><?php echo esc_html__('Quick Actions', 'deal-notification-engine'); ?></h2>
+                <p>
+                    <a href="<?php echo admin_url('admin.php?page=deal-notifications-settings'); ?>" class="button button-primary">
+                        <?php echo esc_html__('Configure Settings', 'deal-notification-engine'); ?>
+                    </a>
+                    <a href="<?php echo admin_url('users.php'); ?>" class="button button-secondary">
+                        <?php echo esc_html__('Manage Users', 'deal-notification-engine'); ?>
+                    </a>
+                </p>
             </div>
         </div>
         <?php

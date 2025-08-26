@@ -13,8 +13,7 @@ class Settings {
         // Register settings
         add_action('admin_init', [$this, 'register_settings']);
         
-        // Add settings page
-        add_action('admin_menu', [$this, 'add_settings_page']);
+        // Settings page is now added directly in Plugin.php
         
         // Add settings link to plugins page
         add_filter('plugin_action_links_' . DNE_PLUGIN_BASENAME, [$this, 'add_settings_link']);
@@ -207,19 +206,6 @@ class Settings {
         );
     }
     
-    /**
-     * Add settings page to menu
-     */
-    public function add_settings_page() {
-        add_submenu_page(
-            'deal-notifications',
-            __('Settings', 'deal-notification-engine'),
-            __('Settings', 'deal-notification-engine'),
-            'manage_options',
-            'deal-notifications-settings',
-            [$this, 'render_settings_page']
-        );
-    }
     
     /**
      * Render settings page
@@ -379,7 +365,7 @@ class Settings {
      * Add settings link to plugins page
      */
     public function add_settings_link($links) {
-        $settings_link = '<a href="admin.php?page=deal-notifications-settings">' . __('Settings', 'deal-notification-engine') . '</a>';
+        $settings_link = '<a href="' . admin_url('admin.php?page=deal-notifications-settings') . '">' . __('Settings', 'deal-notification-engine') . '</a>';
         array_unshift($links, $settings_link);
         return $links;
     }
