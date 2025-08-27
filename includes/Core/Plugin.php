@@ -15,6 +15,7 @@ class Plugin {
     private $notification_engine;
     private $telegram_integration;
     private $settings;
+    private $metabox;
     
     /**
      * Get singleton instance
@@ -64,6 +65,9 @@ class Plugin {
         
         // Initialize Telegram integration
         $this->telegram_integration = new \DNE\Integrations\Telegram();
+        
+        // Initialize Metabox
+        $this->metabox = new \DNE\Admin\Metabox();
     }
     
     /**
@@ -81,6 +85,9 @@ class Plugin {
         
         // Initialize Telegram
         $this->telegram_integration->init();
+        
+        // Initialize Metabox
+        $this->metabox->init();
     }
     
     /**
@@ -95,6 +102,7 @@ class Plugin {
         
         // Enqueue scripts
         add_action('wp_enqueue_scripts', [$this, 'enqueue_scripts']);
+        add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
     }
     
     /**
@@ -157,6 +165,44 @@ class Plugin {
             </div>
             
             <div class="card">
+                <h2><?php echo esc_html__('Test Notification', 'deal-notification-engine'); ?></h2>
+                <p><?php echo esc_html__('Send a test notification to verify everything is working.', 'deal-notification-engine'); ?></p>
+                
+                <table class="form-table">
+                    <tr>
+                        <th><label for="test-post-id">Post ID</label></th>
+                        <td>
+                            <input type="number" id="test-post-id" class="small-text" placeholder="123">
+                            <span class="description">ID of a published post to use as test content</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th><label for="test-user-id">User ID</label></th>
+                        <td>
+                            <input type="number" id="test-user-id" class="small-text" value="<?php echo get_current_user_id(); ?>">
+                            <span class="description">User to send the test to (defaults to you)</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th><label for="test-method">Method</label></th>
+                        <td>
+                            <select id="test-method">
+                                <option value="email">Email</option>
+                                <option value="telegram">Telegram</option>
+                                <option value="webpush">Web Push (OneSignal)</option>
+                            </select>
+                        </td>
+                    </tr>
+                </table>
+                
+                <p>
+                    <button type="button" id="send-test-notification" class="button button-primary">
+                        Send Test Notification
+                    </button>
+                </p>
+            </div>
+            
+            <div class="card">
                 <h2><?php echo esc_html__('Quick Actions', 'deal-notification-engine'); ?></h2>
                 <p>
                     <a href="<?php echo admin_url('admin.php?page=deal-notifications-settings'); ?>" class="button button-primary">
@@ -165,7 +211,50 @@ class Plugin {
                     <a href="<?php echo admin_url('users.php'); ?>" class="button button-secondary">
                         <?php echo esc_html__('Manage Users', 'deal-notification-engine'); ?>
                     </a>
+                    <button type="button" class="button button-secondary" onclick="if(confirm('Process all pending notifications now?')) { jQuery.post(ajaxurl, {action: 'dne_process_queue_manually'}, function(r) { alert(r.data || 'Processing started'); location.reload(); }); }">
+                        <?php echo esc_html__('Process Queue Now', 'deal-notification-engine'); ?>
+                    </button>
                 </p>
+            </div>
+            
+            <div class="card">
+                <h2><?php echo esc_html__('Recent Notification Log', 'deal-notification-engine'); ?></h2>
+                <?php
+                if ($wpdb->get_var("SHOW TABLES LIKE '$table_log'") === $table_log) {
+                    $recent_logs = $wpdb->get_results(
+                        "SELECT * FROM $table_log ORDER BY created_at DESC LIMIT 10"
+                    );
+                    
+                    if ($recent_logs) {
+                        echo '<table class="wp-list-table widefat fixed striped">';
+                        echo '<thead><tr>
+                            <th>User</th>
+                            <th>Post</th>
+                            <th>Method</th>
+                            <th>Status</th>
+                            <th>Time</th>
+                        </tr></thead><tbody>';
+                        
+                        foreach ($recent_logs as $log) {
+                            $user = get_userdata($log->user_id);
+                            $post = get_post($log->post_id);
+                            echo '<tr>';
+                            echo '<td>' . ($user ? esc_html($user->display_name) : 'User #' . $log->user_id) . '</td>';
+                            echo '<td>' . ($post ? esc_html($post->post_title) : 'Post #' . $log->post_id) . '</td>';
+                            echo '<td>' . esc_html($log->delivery_method ?? $log->action) . '</td>';
+                            echo '<td>' . esc_html($log->status) . '</td>';
+                            echo '<td>' . esc_html($log->created_at) . '</td>';
+                            echo '</tr>';
+                        }
+                        
+                        echo '</tbody></table>';
+                    } else {
+                        echo '<p>No notifications sent yet.</p>';
+                    }
+                } else {
+                    echo '<p>Log table not created yet.</p>';
+                }
+                ?>
             </div>
         </div>
         <?php
@@ -189,6 +278,48 @@ class Plugin {
                 'ajax_url' => admin_url('admin-ajax.php'),
                 'nonce' => wp_create_nonce('dne_ajax_nonce')
             ]);
+        }
+    }
+    
+    /**
+     * Enqueue admin scripts
+     */
+    public function enqueue_admin_scripts($hook) {
+        // Only on our plugin pages
+        if (strpos($hook, 'deal-notifications') === false) {
+            return;
+        }
+        
+        wp_enqueue_script('jquery');
+        
+        // Add inline script for test notifications
+        if ($hook === 'toplevel_page_deal-notifications') {
+            wp_add_inline_script('jquery', '
+                jQuery(document).ready(function($) {
+                    $("#send-test-notification").on("click", function() {
+                        var button = $(this);
+                        var originalText = button.text();
+                        
+                        button.text("Sending...").prop("disabled", true);
+                        
+                        $.post(ajaxurl, {
+                            action: "dne_send_test_notification",
+                            post_id: $("#test-post-id").val(),
+                            user_id: $("#test-user-id").val(),
+                            method: $("#test-method").val(),
+                            nonce: "' . wp_create_nonce('dne_test_notification') . '"
+                        }, function(response) {
+                            if (response.success) {
+                                alert("Success: " + response.data);
+                            } else {
+                                alert("Error: " + response.data);
+                            }
+                        }).always(function() {
+                            button.text(originalText).prop("disabled", false);
+                        });
+                    });
+                });
+            ');
         }
     }
 }

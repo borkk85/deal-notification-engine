@@ -2,9 +2,27 @@
 namespace DNE\Notifications;
 
 /**
- * Main notification processing engine
+ * Main notification processing engine - orchestrates the notification process
  */
 class Engine {
+    
+    /**
+     * Filter instance
+     */
+    private $filter;
+    
+    /**
+     * Queue instance
+     */
+    private $queue;
+    
+    /**
+     * Constructor
+     */
+    public function __construct() {
+        $this->filter = new Filter();
+        $this->queue = new Queue();
+    }
     
     /**
      * Initialize the engine
@@ -38,11 +56,24 @@ class Engine {
         // Get deal details
         $deal_data = $this->extract_deal_data($post_id, $post);
         
-        // Find matching users
-        $matched_users = $this->find_matching_users($deal_data);
+        // Find matching users using Filter
+        $matched_users = $this->filter->find_matching_users($deal_data);
         
-        // Queue notifications for matched users
-        $this->queue_notifications($matched_users, $post_id);
+        // Queue notifications using Queue manager
+        $queued = $this->queue->add_to_queue($matched_users, $post_id, $this->filter);
+        
+        // Log the queue operation
+        if ($queued > 0) {
+            $this->queue->log_activity([
+                'post_id' => $post_id,
+                'action' => 'notifications_queued',
+                'status' => 'success',
+                'details' => [
+                    'users_matched' => count($matched_users),
+                    'notifications_queued' => $queued
+                ]
+            ]);
+        }
         
         // Process immediately if configured
         if (get_option('dne_process_immediately') === '1') {
@@ -54,21 +85,51 @@ class Engine {
      * Check if post is a deal
      */
     private function is_deal_post($post_id) {
+        // Allow all posts to be considered deals if they have:
+        // 1. Deal-related categories/tags
+        // 2. Product categories taxonomy
+        // 3. Store type taxonomy
+        // 4. Discount percentage in content
+        
+        // Check for product categories (your custom taxonomy)
+        $product_cats = wp_get_object_terms($post_id, 'product_categories', ['fields' => 'ids']);
+        if (!is_wp_error($product_cats) && !empty($product_cats)) {
+            return true; // Has product categories = likely a deal
+        }
+        
+        // Check for stores (your custom taxonomy)
+        $stores = wp_get_object_terms($post_id, 'store_type', ['fields' => 'ids']);
+        if (!is_wp_error($stores) && !empty($stores)) {
+            return true; // Has store = likely a deal
+        }
+        
+        // Check for discount percentage in content
+        $post = get_post($post_id);
+        if ($post) {
+            $content = $post->post_title . ' ' . $post->post_content;
+            if (preg_match('/\d+\s*%/', $content)) {
+                return true; // Has percentage = likely a deal
+            }
+        }
+        
         // Check for deal-related categories
         $categories = wp_get_post_categories($post_id);
-        $deal_categories = get_terms([
-            'taxonomy' => 'category',
-            'name__like' => 'deal',
-            'fields' => 'ids'
-        ]);
-        
-        if (array_intersect($categories, $deal_categories)) {
-            return true;
+        if (!empty($categories)) {
+            $deal_categories = get_terms([
+                'taxonomy' => 'category',
+                'name__like' => 'deal',
+                'fields' => 'ids',
+                'hide_empty' => false
+            ]);
+            
+            if (!is_wp_error($deal_categories) && array_intersect($categories, $deal_categories)) {
+                return true;
+            }
         }
         
         // Check for deal-related tags
         $tags = wp_get_post_tags($post_id, ['fields' => 'names']);
-        $deal_keywords = ['deal', 'offer', 'discount', 'sale', 'promo'];
+        $deal_keywords = ['deal', 'offer', 'discount', 'sale', 'promo', 'coupon', 'save'];
         
         foreach ($tags as $tag) {
             foreach ($deal_keywords as $keyword) {
@@ -78,12 +139,18 @@ class Engine {
             }
         }
         
-        // Check post title
+        // Check post title for deal keywords
         $title = get_the_title($post_id);
         foreach ($deal_keywords as $keyword) {
             if (stripos($title, $keyword) !== false) {
                 return true;
             }
+        }
+        
+        // Allow manual override via post meta
+        $is_deal = get_post_meta($post_id, '_is_deal_post', true);
+        if ($is_deal === '1') {
+            return true;
         }
         
         return false;
@@ -125,117 +192,11 @@ class Engine {
     }
     
     /**
-     * Find users whose preferences match the deal
-     */
-    private function find_matching_users($deal_data) {
-        global $wpdb;
-        $matched_users = [];
-        
-        // Get all users with deal tier roles
-        $users = get_users([
-            'role__in' => ['um_deal-tier-1', 'um_deal-tier_1', 'um_deal-tier-2', 'um_deal-tier_2', 'um_deal-tier-3', 'um_deal-tier_3'],
-            'meta_key' => 'notifications_enabled',
-            'meta_value' => '1'
-        ]);
-        
-        foreach ($users as $user) {
-            // Check if user's filters match the deal
-            if ($this->user_matches_deal($user->ID, $deal_data)) {
-                $matched_users[] = $user->ID;
-            }
-        }
-        
-        return $matched_users;
-    }
-    
-    /**
-     * Check if user's preferences match the deal
-     */
-    private function user_matches_deal($user_id, $deal_data) {
-        // Get user preferences
-        $discount_filter = get_user_meta($user_id, 'user_discount_filter', true);
-        $category_filter = get_user_meta($user_id, 'user_category_filter', true);
-        $store_filter = get_user_meta($user_id, 'user_store_filter', true);
-        
-        // Check discount filter
-        if (!empty($discount_filter) && $deal_data['discount'] < intval($discount_filter)) {
-            return false;
-        }
-        
-        // Check category filter
-        if (!empty($category_filter) && is_array($category_filter)) {
-            if (empty(array_intersect($category_filter, $deal_data['categories']))) {
-                return false;
-            }
-        }
-        
-        // Check store filter
-        if (!empty($store_filter) && is_array($store_filter)) {
-            if (empty(array_intersect($store_filter, $deal_data['stores']))) {
-                return false;
-            }
-        }
-        
-        return true;
-    }
-    
-    /**
-     * Queue notifications for matched users
-     */
-    private function queue_notifications($user_ids, $post_id) {
-        global $wpdb;
-        $table = $wpdb->prefix . 'dne_notification_queue';
-        
-        foreach ($user_ids as $user_id) {
-            // Get user's delivery methods
-            $delivery_methods = get_user_meta($user_id, 'notification_delivery_methods', true);
-            if (empty($delivery_methods)) {
-                $delivery_methods = ['email']; // Default to email
-            }
-            
-            // Queue notification for each delivery method
-            foreach ($delivery_methods as $method) {
-                // Check if notification already queued (prevent duplicates)
-                $exists = $wpdb->get_var($wpdb->prepare(
-                    "SELECT id FROM $table WHERE user_id = %d AND post_id = %d AND delivery_method = %s AND status = 'pending'",
-                    $user_id, $post_id, $method
-                ));
-                
-                if (!$exists) {
-                    $wpdb->insert(
-                        $table,
-                        [
-                            'user_id' => $user_id,
-                            'post_id' => $post_id,
-                            'delivery_method' => $method,
-                            'status' => 'pending',
-                            'scheduled_at' => current_time('mysql')
-                        ],
-                        ['%d', '%d', '%s', '%s', '%s']
-                    );
-                }
-            }
-        }
-    }
-    
-    /**
      * Process notification queue
      */
     public function process_queue() {
-        global $wpdb;
-        $table = $wpdb->prefix . 'dne_notification_queue';
-        
         // Get batch of pending notifications
-        $batch_size = get_option('dne_batch_size', 50);
-        $notifications = $wpdb->get_results($wpdb->prepare(
-            "SELECT * FROM $table 
-             WHERE status = 'pending' 
-             AND attempts < 3 
-             AND scheduled_at <= NOW() 
-             ORDER BY scheduled_at ASC 
-             LIMIT %d",
-            $batch_size
-        ));
+        $notifications = $this->queue->get_pending_batch();
         
         foreach ($notifications as $notification) {
             $this->send_notification($notification);
@@ -246,30 +207,20 @@ class Engine {
      * Send individual notification
      */
     private function send_notification($notification) {
-        global $wpdb;
-        $table = $wpdb->prefix . 'dne_notification_queue';
-        $log_table = $wpdb->prefix . 'dne_notification_log';
-        
         // Update attempts
-        $wpdb->update(
-            $table,
-            ['attempts' => $notification->attempts + 1],
-            ['id' => $notification->id],
-            ['%d'],
-            ['%d']
-        );
+        $this->queue->increment_attempts($notification->id);
         
         // Get post data
         $post = get_post($notification->post_id);
         if (!$post) {
-            $this->mark_notification_failed($notification->id, 'Post not found');
+            $this->queue->mark_failed($notification->id, 'Post not found');
             return;
         }
         
         // Get user data
         $user = get_userdata($notification->user_id);
         if (!$user) {
-            $this->mark_notification_failed($notification->id, 'User not found');
+            $this->queue->mark_failed($notification->id, 'User not found');
             return;
         }
         
@@ -293,91 +244,56 @@ class Engine {
                 break;
                 
             case 'webpush':
-                // OneSignal integration (stub for now)
+                $onesignal = new \DNE\Integrations\OneSignal();
+                $result = $onesignal->send_notification($user->ID, $post);
+                $success = $result['success'];
+                $error_message = $result['message'] ?? '';
+                break;
+                
+            default:
                 $success = false;
-                $error_message = 'Web push not yet implemented';
+                $error_message = 'Unknown delivery method: ' . $notification->delivery_method;
                 break;
         }
         
         // Update notification status
         if ($success) {
-            $wpdb->update(
-                $table,
-                [
-                    'status' => 'sent',
-                    'processed_at' => current_time('mysql')
-                ],
-                ['id' => $notification->id],
-                ['%s', '%s'],
-                ['%d']
-            );
+            $this->queue->mark_sent($notification->id);
             
             // Log success
-            $wpdb->insert(
-                $log_table,
-                [
-                    'user_id' => $notification->user_id,
-                    'post_id' => $notification->post_id,
-                    'delivery_method' => $notification->delivery_method,
-                    'action' => 'notification_sent',
-                    'status' => 'success',
-                    'sent_at' => current_time('mysql')
-                ],
-                ['%d', '%d', '%s', '%s', '%s', '%s']
-            );
+            $this->queue->log_activity([
+                'user_id' => $notification->user_id,
+                'post_id' => $notification->post_id,
+                'delivery_method' => $notification->delivery_method,
+                'action' => 'notification_sent',
+                'status' => 'success',
+                'sent_at' => current_time('mysql')
+            ]);
         } else {
             // Check if max attempts reached
             if ($notification->attempts >= 2) {
-                $this->mark_notification_failed($notification->id, $error_message);
+                $this->queue->mark_failed($notification->id, $error_message);
+                
+                // Log failure
+                $this->queue->log_activity([
+                    'user_id' => $notification->user_id,
+                    'post_id' => $notification->post_id,
+                    'delivery_method' => $notification->delivery_method,
+                    'action' => 'notification_failed',
+                    'status' => 'failed',
+                    'details' => ['error' => $error_message]
+                ]);
             } else {
                 // Update error message for retry
-                $wpdb->update(
-                    $table,
-                    ['error_message' => $error_message],
-                    ['id' => $notification->id],
-                    ['%s'],
-                    ['%d']
-                );
+                $this->queue->update_error($notification->id, $error_message);
             }
         }
-    }
-    
-    /**
-     * Mark notification as failed
-     */
-    private function mark_notification_failed($notification_id, $error_message) {
-        global $wpdb;
-        $table = $wpdb->prefix . 'dne_notification_queue';
-        
-        $wpdb->update(
-            $table,
-            [
-                'status' => 'failed',
-                'error_message' => $error_message,
-                'processed_at' => current_time('mysql')
-            ],
-            ['id' => $notification_id],
-            ['%s', '%s', '%s'],
-            ['%d']
-        );
     }
     
     /**
      * Clean up old logs
      */
     public function cleanup_logs() {
-        global $wpdb;
-        $log_table = $wpdb->prefix . 'dne_notification_log';
-        $queue_table = $wpdb->prefix . 'dne_notification_queue';
-        
-        // Delete logs older than 30 days
-        $wpdb->query(
-            "DELETE FROM $log_table WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY)"
-        );
-        
-        // Delete processed queue items older than 7 days
-        $wpdb->query(
-            "DELETE FROM $queue_table WHERE status IN ('sent', 'failed') AND processed_at < DATE_SUB(NOW(), INTERVAL 7 DAY)"
-        );
+        $this->queue->cleanup();
     }
 }

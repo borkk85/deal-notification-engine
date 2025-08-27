@@ -18,23 +18,10 @@ define('DNE_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('DNE_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('DNE_PLUGIN_BASENAME', plugin_basename(__FILE__));
 
-// Autoloader
-spl_autoload_register(function ($class) {
-    $prefix = 'DNE\\';
-    $base_dir = DNE_PLUGIN_DIR . 'includes/';
-    
-    $len = strlen($prefix);
-    if (strncmp($prefix, $class, $len) !== 0) {
-        return;
-    }
-    
-    $relative_class = substr($class, $len);
-    $file = $base_dir . str_replace('\\', '/', $relative_class) . '.php';
-    
-    if (file_exists($file)) {
-        require $file;
-    }
-});
+// Load autoloader
+require_once DNE_PLUGIN_DIR . 'includes/Core/Autoloader.php';
+$autoloader = new DNE\Core\Autoloader();
+$autoloader->register();
 
 // Initialize plugin
 function dne_init() {

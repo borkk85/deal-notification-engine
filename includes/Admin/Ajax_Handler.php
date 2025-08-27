@@ -22,6 +22,16 @@ class Ajax_Handler {
         // Telegram disconnection
         add_action('wp_ajax_disconnect_telegram', [$this, 'disconnect_telegram']);
         add_action('wp_ajax_nopriv_disconnect_telegram', [$this, 'disconnect_telegram']);
+        
+        // OneSignal player ID
+        add_action('wp_ajax_dne_save_onesignal_player_id', [$this, 'save_onesignal_player_id']);
+        add_action('wp_ajax_nopriv_dne_save_onesignal_player_id', [$this, 'save_onesignal_player_id']);
+        
+        // Test notification (admin only)
+        add_action('wp_ajax_dne_send_test_notification', [$this, 'send_test_notification']);
+        
+        // Process queue manually (admin only)
+        add_action('wp_ajax_dne_process_queue_manually', [$this, 'process_queue_manually']);
     }
     
     /**
@@ -231,5 +241,116 @@ class Ajax_Handler {
                 ['%d', '%s', '%s', '%s']
             );
         }
+    }
+    
+    /**
+     * Save OneSignal player ID
+     */
+    public function save_onesignal_player_id() {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'dne_ajax_nonce')) {
+            wp_send_json_error('Security verification failed');
+            return;
+        }
+        
+        $user_id = get_current_user_id();
+        if (!$user_id) {
+            wp_send_json_error('Not logged in');
+            return;
+        }
+        
+        $player_id = sanitize_text_field($_POST['player_id'] ?? '');
+        if (empty($player_id)) {
+            wp_send_json_error('Invalid player ID');
+            return;
+        }
+        
+        update_user_meta($user_id, 'onesignal_player_id', $player_id);
+        
+        // Log the subscription
+        $this->log_preference_update($user_id, [
+            'action' => 'onesignal_subscribed',
+            'player_id' => substr($player_id, 0, 10) . '...' // Log partial ID for privacy
+        ]);
+        
+        wp_send_json_success('Player ID saved');
+    }
+    
+    /**
+     * Send test notification (admin only)
+     */
+    public function send_test_notification() {
+        // Check admin permissions
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Insufficient permissions');
+            return;
+        }
+        
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'dne_test_notification')) {
+            wp_send_json_error('Security verification failed');
+            return;
+        }
+        
+        $post_id = intval($_POST['post_id'] ?? 0);
+        $user_id = intval($_POST['user_id'] ?? get_current_user_id());
+        $method = sanitize_text_field($_POST['method'] ?? 'email');
+        
+        // Get post
+        $post = get_post($post_id);
+        if (!$post) {
+            wp_send_json_error('Post not found');
+            return;
+        }
+        
+        // Get user
+        $user = get_userdata($user_id);
+        if (!$user) {
+            wp_send_json_error('User not found');
+            return;
+        }
+        
+        // Send notification based on method
+        $result = ['success' => false, 'message' => 'Method not implemented'];
+        
+        switch ($method) {
+            case 'email':
+                $email = new \DNE\Integrations\Email();
+                $result = $email->send($user, $post);
+                break;
+                
+            case 'telegram':
+                $telegram = new \DNE\Integrations\Telegram();
+                $result = $telegram->send_notification($user_id, $post);
+                break;
+                
+            case 'webpush':
+                $onesignal = new \DNE\Integrations\OneSignal();
+                $result = $onesignal->send_notification($user_id, $post);
+                break;
+        }
+        
+        if ($result['success']) {
+            wp_send_json_success('Test notification sent: ' . $result['message']);
+        } else {
+            wp_send_json_error('Failed to send: ' . $result['message']);
+        }
+    }
+    
+    /**
+     * Process notification queue manually (admin only)
+     */
+    public function process_queue_manually() {
+        // Check admin permissions
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Insufficient permissions');
+            return;
+        }
+        
+        // Process the queue
+        $engine = new \DNE\Notifications\Engine();
+        $engine->process_queue();
+        
+        wp_send_json_success('Queue processing initiated');
     }
 }
