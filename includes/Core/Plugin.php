@@ -1,13 +1,15 @@
 <?php
+
 namespace DNE\Core;
 
 /**
  * Main plugin class - Singleton pattern
  */
-class Plugin {
-    
+class Plugin
+{
+
     private static $instance = null;
-    
+
     /**
      * Plugin components
      */
@@ -16,99 +18,106 @@ class Plugin {
     private $telegram_integration;
     private $settings;
     private $metabox;
-    
+
     /**
      * Get singleton instance
      */
-    public static function get_instance() {
+    public static function get_instance()
+    {
         if (null === self::$instance) {
             self::$instance = new self();
         }
         return self::$instance;
     }
-    
+
     /**
      * Private constructor
      */
-    private function __construct() {
+    private function __construct()
+    {
         // Singleton pattern
     }
-    
+
     /**
      * Initialize plugin
      */
-    public function init() {
+    public function init()
+    {
         // Load dependencies
         $this->load_dependencies();
-        
+
         // Initialize components
         $this->init_components();
-        
+
         // Register hooks
         $this->register_hooks();
     }
-    
+
     /**
      * Load required dependencies
      */
-    private function load_dependencies() {
+    private function load_dependencies()
+    {
         // Core classes are autoloaded
-        
+
         // Initialize Settings
         $this->settings = new \DNE\Admin\Settings();
-        
+
         // Initialize AJAX handler
         $this->ajax_handler = new \DNE\Admin\Ajax_Handler();
-        
+
         // Initialize notification engine
         $this->notification_engine = new \DNE\Notifications\Engine();
-        
+
         // Initialize Telegram integration
         $this->telegram_integration = new \DNE\Integrations\Telegram();
-        
+
         // Initialize Metabox
         $this->metabox = new \DNE\Admin\Metabox();
     }
-    
+
     /**
      * Initialize components
      */
-    private function init_components() {
+    private function init_components()
+    {
         // Initialize Settings
         $this->settings->init();
-        
+
         // Initialize AJAX handlers
         $this->ajax_handler->init();
-        
+
         // Initialize notification engine
         $this->notification_engine->init();
-        
+
         // Initialize Telegram
         $this->telegram_integration->init();
-        
+
         // Initialize Metabox
         $this->metabox->init();
     }
-    
+
     /**
      * Register plugin hooks
      */
-    private function register_hooks() {
+    private function register_hooks()
+    {
         // Hook into post publication for deal notifications
         add_action('publish_post', [$this->notification_engine, 'handle_new_deal'], 10, 2);
-        
+
         // Add admin menu
         add_action('admin_menu', [$this, 'add_admin_menu']);
-        
+
         // Enqueue scripts
         add_action('wp_enqueue_scripts', [$this, 'enqueue_scripts']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
     }
-    
+
     /**
      * Add admin menu
      */
-    public function add_admin_menu() {
+    public function add_admin_menu()
+    {
         // Add main menu page
         add_menu_page(
             __('Deal Notifications', 'deal-notification-engine'),
@@ -119,7 +128,7 @@ class Plugin {
             'dashicons-megaphone',
             30
         );
-        
+
         // Add Settings as submenu directly here
         add_submenu_page(
             'deal-notifications',
@@ -130,44 +139,45 @@ class Plugin {
             [$this->settings, 'render_settings_page']
         );
     }
-    
+
     /**
      * Render admin page
      */
-    public function render_admin_page() {
-        ?>
+    public function render_admin_page()
+    {
+?>
         <div class="wrap">
             <h1><?php echo esc_html__('Deal Notification Engine', 'deal-notification-engine'); ?></h1>
-            
+
             <div class="notice notice-info">
                 <p><?php echo esc_html__('Notification system is active. Configure settings below.', 'deal-notification-engine'); ?></p>
             </div>
-            
+
             <div class="card">
                 <h2><?php echo esc_html__('Statistics', 'deal-notification-engine'); ?></h2>
                 <?php
                 global $wpdb;
                 $table_queue = $wpdb->prefix . 'dne_notification_queue';
                 $table_log = $wpdb->prefix . 'dne_notification_log';
-                
+
                 // Get stats if tables exist
                 if ($wpdb->get_var("SHOW TABLES LIKE '$table_queue'") === $table_queue) {
                     $pending = $wpdb->get_var("SELECT COUNT(*) FROM $table_queue WHERE status = 'pending'");
                     $sent_today = $wpdb->get_var("SELECT COUNT(*) FROM $table_log WHERE DATE(sent_at) = CURDATE()");
-                    ?>
+                ?>
                     <p><strong>Pending Notifications:</strong> <?php echo intval($pending); ?></p>
                     <p><strong>Sent Today:</strong> <?php echo intval($sent_today); ?></p>
-                    <?php
+                <?php
                 } else {
                     echo '<p>' . esc_html__('Database tables not yet created. Please deactivate and reactivate the plugin.', 'deal-notification-engine') . '</p>';
                 }
                 ?>
             </div>
-            
+
             <div class="card">
                 <h2><?php echo esc_html__('Test Notification', 'deal-notification-engine'); ?></h2>
                 <p><?php echo esc_html__('Send a test notification to verify everything is working.', 'deal-notification-engine'); ?></p>
-                
+
                 <table class="form-table">
                     <tr>
                         <th><label for="test-post-id">Post ID</label></th>
@@ -193,15 +203,37 @@ class Plugin {
                             </select>
                         </td>
                     </tr>
+                    <tr class="test-custom-field" id="test-custom-email-row" style="display:none;">
+                        <th><label for="test-custom-email">Custom Email</label></th>
+                        <td>
+                            <input type="email" id="test-custom-email" class="regular-text" placeholder="test@example.com">
+                            <span class="description">Override user's email for testing (optional)</span>
+                        </td>
+                    </tr>
+                    <tr class="test-custom-field" id="test-custom-telegram-row" style="display:none;">
+                        <th><label for="test-custom-telegram">Telegram Chat ID</label></th>
+                        <td>
+                            <input type="text" id="test-custom-telegram" class="regular-text" placeholder="123456789">
+                            <span class="description">Override user's Telegram chat ID for testing (optional)</span>
+                        </td>
+                    </tr>
+                    <tr class="test-custom-field" id="test-custom-onesignal-row" style="display:none;">
+                        <th><label for="test-custom-onesignal">OneSignal Player ID</label></th>
+                        <td>
+                            <input type="text" id="test-custom-onesignal" class="regular-text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+                            <span class="description">Override user's OneSignal player ID for testing (optional)</span>
+                        </td>
+                    </tr>
                 </table>
-                
+
                 <p>
                     <button type="button" id="send-test-notification" class="button button-primary">
                         Send Test Notification
                     </button>
+                    <span id="test-result-message" style="margin-left: 10px;"></span>
                 </p>
             </div>
-            
+
             <div class="card">
                 <h2><?php echo esc_html__('Quick Actions', 'deal-notification-engine'); ?></h2>
                 <p>
@@ -216,7 +248,7 @@ class Plugin {
                     </button>
                 </p>
             </div>
-            
+
             <div class="card">
                 <h2><?php echo esc_html__('Recent Notification Log', 'deal-notification-engine'); ?></h2>
                 <?php
@@ -224,7 +256,7 @@ class Plugin {
                     $recent_logs = $wpdb->get_results(
                         "SELECT * FROM $table_log ORDER BY created_at DESC LIMIT 10"
                     );
-                    
+
                     if ($recent_logs) {
                         echo '<table class="wp-list-table widefat fixed striped">';
                         echo '<thead><tr>
@@ -234,7 +266,7 @@ class Plugin {
                             <th>Status</th>
                             <th>Time</th>
                         </tr></thead><tbody>';
-                        
+
                         foreach ($recent_logs as $log) {
                             $user = get_userdata($log->user_id);
                             $post = get_post($log->post_id);
@@ -246,7 +278,7 @@ class Plugin {
                             echo '<td>' . esc_html($log->created_at) . '</td>';
                             echo '</tr>';
                         }
-                        
+
                         echo '</tbody></table>';
                     } else {
                         echo '<p>No notifications sent yet.</p>';
@@ -257,13 +289,14 @@ class Plugin {
                 ?>
             </div>
         </div>
-        <?php
+<?php
     }
-    
+
     /**
      * Enqueue frontend scripts
      */
-    public function enqueue_scripts() {
+    public function enqueue_scripts()
+    {
         // Only on pages where needed
         if (is_page() || is_single()) {
             wp_enqueue_script(
@@ -273,25 +306,26 @@ class Plugin {
                 DNE_VERSION,
                 true
             );
-            
+
             wp_localize_script('dne-frontend', 'dne_ajax', [
                 'ajax_url' => admin_url('admin-ajax.php'),
                 'nonce' => wp_create_nonce('dne_ajax_nonce')
             ]);
         }
     }
-    
+
     /**
      * Enqueue admin scripts
      */
-    public function enqueue_admin_scripts($hook) {
+    public function enqueue_admin_scripts($hook)
+    {
         // Only on our plugin pages
         if (strpos($hook, 'deal-notifications') === false) {
             return;
         }
-        
+
         wp_enqueue_script('jquery');
-        
+
         // Add inline script for test notifications
         if ($hook === 'toplevel_page_deal-notifications') {
             wp_add_inline_script('jquery', '

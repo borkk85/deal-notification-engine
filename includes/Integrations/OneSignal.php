@@ -23,6 +23,11 @@ class OneSignal {
     public function send_notification($user_id, $post) {
         // Check if OneSignal is enabled
         if (get_option('dne_onesignal_enabled') !== '1' || empty($this->app_id) || empty($this->api_key)) {
+            if (get_option('dne_debug_mode') === '1') {
+                error_log('[DNE OneSignal] Not configured - Enabled: ' . get_option('dne_onesignal_enabled') . 
+                         ', App ID: ' . (empty($this->app_id) ? 'empty' : 'set') . 
+                         ', API Key: ' . (empty($this->api_key) ? 'empty' : 'set'));
+            }
             return [
                 'success' => false,
                 'message' => 'OneSignal not configured'
@@ -33,10 +38,17 @@ class OneSignal {
         $player_id = get_user_meta($user_id, 'onesignal_player_id', true);
         
         if (empty($player_id)) {
+            if (get_option('dne_debug_mode') === '1') {
+                error_log('[DNE OneSignal] User ' . $user_id . ' has no OneSignal player ID');
+            }
             return [
                 'success' => false,
                 'message' => 'User has not subscribed to push notifications'
             ];
+        }
+        
+        if (get_option('dne_debug_mode') === '1') {
+            error_log('[DNE OneSignal] Sending to player ID: ' . $player_id);
         }
         
         // Prepare notification data
@@ -62,6 +74,10 @@ class OneSignal {
             'firefox_icon' => get_site_icon_url(256)
         ];
         
+        if (get_option('dne_debug_mode') === '1') {
+            error_log('[DNE OneSignal] API Payload: ' . print_r($fields, true));
+        }
+        
         // Send via OneSignal API
         $response = wp_remote_post('https://onesignal.com/api/v1/notifications', [
             'headers' => [
@@ -73,13 +89,22 @@ class OneSignal {
         ]);
         
         if (is_wp_error($response)) {
+            if (get_option('dne_debug_mode') === '1') {
+                error_log('[DNE OneSignal] WP Error: ' . $response->get_error_message());
+            }
             return [
                 'success' => false,
                 'message' => 'API error: ' . $response->get_error_message()
             ];
         }
         
+        $response_code = wp_remote_retrieve_response_code($response);
         $body = json_decode(wp_remote_retrieve_body($response), true);
+        
+        if (get_option('dne_debug_mode') === '1') {
+            error_log('[DNE OneSignal] Response Code: ' . $response_code);
+            error_log('[DNE OneSignal] Response Body: ' . print_r($body, true));
+        }
         
         if (isset($body['id'])) {
             return [
@@ -89,9 +114,14 @@ class OneSignal {
             ];
         }
         
+        $error_message = isset($body['errors']) ? 
+            (is_array($body['errors']) ? implode(', ', $body['errors']) : $body['errors']) : 
+            'Unknown error (Code: ' . $response_code . ')';
+            
         return [
             'success' => false,
-            'message' => isset($body['errors']) ? implode(', ', $body['errors']) : 'Unknown error'
+            'message' => $error_message,
+            'debug' => $body
         ];
     }
     

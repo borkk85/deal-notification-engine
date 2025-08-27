@@ -9,6 +9,9 @@ class Email {
     /**
      * Send email notification
      */
+    /**
+     * Send email notification
+     */
     public function send($user, $post) {
         // Get email settings
         $from_name = get_option('dne_email_from_name', get_bloginfo('name'));
@@ -18,6 +21,12 @@ class Email {
         // Prepare email data
         $to = $user->user_email;
         $subject = str_replace('{title}', get_the_title($post), $subject_template);
+        
+        if (get_option('dne_debug_mode') === '1') {
+            error_log('[DNE Email] Sending to: ' . $to);
+            error_log('[DNE Email] Subject: ' . $subject);
+            error_log('[DNE Email] From: ' . $from_name . ' <' . $from_email . '>');
+        }
         
         // Build email content
         $message = $this->build_email_content($user, $post);
@@ -31,9 +40,18 @@ class Email {
         // Send email
         $sent = wp_mail($to, $subject, $message, $headers);
         
+        if (get_option('dne_debug_mode') === '1') {
+            error_log('[DNE Email] Send result: ' . ($sent ? 'SUCCESS' : 'FAILED'));
+            if (!$sent) {
+                // Try to get more info about mail configuration
+                error_log('[DNE Email] PHP mail() available: ' . (function_exists('mail') ? 'yes' : 'no'));
+                error_log('[DNE Email] WordPress SMTP configured: ' . (defined('SMTP_HOST') ? 'yes' : 'no'));
+            }
+        }
+        
         return [
             'success' => $sent,
-            'message' => $sent ? 'Email sent successfully' : 'Failed to send email'
+            'message' => $sent ? 'Email sent successfully' : 'Failed to send email (check SMTP configuration)'
         ];
     }
     
