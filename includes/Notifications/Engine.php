@@ -243,12 +243,12 @@ class Engine {
                 $error_message = $result['message'] ?? '';
                 break;
                 
-            case 'webpush':
-                $onesignal = new \DNE\Integrations\OneSignal();
-                $result = $onesignal->send_notification($user->ID, $post);
-                $success = $result['success'];
-                $error_message = $result['message'] ?? '';
-                break;
+            // case 'webpush':
+            //     $onesignal = new \DNE\Integrations\OneSignal();
+            //     $result = $onesignal->send_notification($user->ID, $post);
+            //     $success = $result['success'];
+            //     $error_message = $result['message'] ?? '';
+            //     break;
                 
             default:
                 $success = false;

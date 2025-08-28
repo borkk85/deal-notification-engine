@@ -377,10 +377,10 @@ class Ajax_Handler
                 $result = $telegram->send_notification($user_id, $post);
                 break;
 
-            case 'webpush':
-                $onesignal = new \DNE\Integrations\OneSignal();
-                $result = $onesignal->send_notification($user_id, $post);
-                break;
+            // case 'webpush':
+            //     $onesignal = new \DNE\Integrations\OneSignal();
+            //     $result = $onesignal->send_notification($user_id, $post);
+            //     break;
         }
 
         // Restore original values if we overrode them

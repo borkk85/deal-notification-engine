@@ -1,53 +1,9 @@
 /**
  * Deal Notification Engine - Frontend JavaScript
- * Handles OneSignal integration and other frontend functionality
+ * Handles notification preference forms and Telegram verification
  */
 
 jQuery(document).ready(function($) {
-    
-    // Initialize OneSignal if configured
-    if (typeof OneSignal !== 'undefined') {
-        OneSignal.push(function() {
-            // Wait for OneSignal to be ready
-            OneSignal.on('subscriptionChange', function(isSubscribed) {
-                if (isSubscribed) {
-                    // User has subscribed, get their player ID
-                    OneSignal.getUserId(function(playerId) {
-                        if (playerId) {
-                            // Save player ID to user meta via AJAX
-                            $.post(dne_ajax.ajax_url, {
-                                action: 'dne_save_onesignal_player_id',
-                                player_id: playerId,
-                                nonce: dne_ajax.nonce
-                            }, function(response) {
-                                if (response.success) {
-                                    console.log('[DNE] OneSignal player ID saved');
-                                } else {
-                                    console.error('[DNE] Failed to save OneSignal player ID:', response.data);
-                                }
-                            });
-                        }
-                    });
-                }
-            });
-            
-            // Check if user is already subscribed
-            OneSignal.isPushNotificationsEnabled(function(isEnabled) {
-                if (isEnabled) {
-                    OneSignal.getUserId(function(playerId) {
-                        if (playerId) {
-                            // User is already subscribed, ensure their player ID is saved
-                            $.post(dne_ajax.ajax_url, {
-                                action: 'dne_save_onesignal_player_id',
-                                player_id: playerId,
-                                nonce: dne_ajax.nonce
-                            });
-                        }
-                    });
-                }
-            });
-        });
-    }
     
     // Handle notification preference form if present
     $('#dne-preferences-form').on('submit', function(e) {
@@ -160,6 +116,23 @@ jQuery(document).ready(function($) {
     // Debug mode indicator
     if (window.location.href.indexOf('dne_debug=1') !== -1) {
         console.log('[DNE] Debug mode active - Check console for detailed logs');
+        
+        // Log OneSignal status if available
+        if (typeof OneSignal !== 'undefined') {
+            console.log('[DNE] OneSignal SDK detected');
+            OneSignal.push(function() {
+                OneSignal.isPushNotificationsEnabled(function(isEnabled) {
+                    console.log('[DNE] OneSignal push enabled:', isEnabled);
+                    if (isEnabled) {
+                        OneSignal.getUserId(function(userId) {
+                            console.log('[DNE] OneSignal Player ID:', userId);
+                        });
+                    }
+                });
+            });
+        } else {
+            console.log('[DNE] OneSignal SDK not found - is the OneSignal plugin active?');
+        }
     }
 });
 

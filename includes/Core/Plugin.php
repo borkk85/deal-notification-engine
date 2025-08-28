@@ -330,19 +330,51 @@ class Plugin
         if ($hook === 'toplevel_page_deal-notifications') {
             wp_add_inline_script('jquery', '
                 jQuery(document).ready(function($) {
+                    // Show/hide custom fields based on selected method
+                    function toggleCustomFields() {
+                        var method = $("#test-method").val();
+                        $(".test-custom-field").hide();
+                        
+                        if (method === "email") {
+                            $("#test-custom-email-row").show();
+                        } else if (method === "telegram") {
+                            $("#test-custom-telegram-row").show();
+                        } else if (method === "webpush") {
+                            $("#test-custom-onesignal-row").show();
+                        }
+                    }
+                    
+                    // Initialize on page load
+                    toggleCustomFields();
+                    
+                    // Update when method changes
+                    $("#test-method").on("change", toggleCustomFields);
+                    
+                    // Handle test notification sending
                     $("#send-test-notification").on("click", function() {
                         var button = $(this);
                         var originalText = button.text();
                         
                         button.text("Sending...").prop("disabled", true);
                         
-                        $.post(ajaxurl, {
+                        var data = {
                             action: "dne_send_test_notification",
                             post_id: $("#test-post-id").val(),
                             user_id: $("#test-user-id").val(),
                             method: $("#test-method").val(),
                             nonce: "' . wp_create_nonce('dne_test_notification') . '"
-                        }, function(response) {
+                        };
+                        
+                        // Add custom values if present
+                        if ($("#test-method").val() === "email") {
+                            data.custom_email = $("#test-custom-email").val();
+                        } else if ($("#test-method").val() === "telegram") {
+                            data.custom_telegram = $("#test-custom-telegram").val();
+                        } else if ($("#test-method").val() === "webpush") {
+                            data.custom_onesignal = $("#test-custom-onesignal").val();
+                        }
+                        
+                        $.post(ajaxurl, data, function(response) {
                             if (response.success) {
                                 alert("Success: " + response.data);
                             } else {
