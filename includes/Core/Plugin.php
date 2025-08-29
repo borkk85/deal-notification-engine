@@ -309,7 +309,11 @@ class Plugin
 
             wp_localize_script('dne-frontend', 'dne_ajax', [
                 'ajax_url' => admin_url('admin-ajax.php'),
-                'nonce' => wp_create_nonce('dne_ajax_nonce')
+                // 'nonce' => wp_create_nonce('dne_ajax_nonce')
+                'nonce' => wp_create_nonce('dne_ajax_nonce'),
+                'save_player_nonce' => wp_create_nonce('save_player_id'),
+                'remove_player_id_nonce' => wp_create_nonce('remove_player_id'),
+                'user_id' => get_current_user_id()
             ]);
         }
     }

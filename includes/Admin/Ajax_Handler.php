@@ -29,12 +29,35 @@ class Ajax_Handler
         // OneSignal player ID
         add_action('wp_ajax_dne_save_onesignal_player_id', [$this, 'save_onesignal_player_id']);
         add_action('wp_ajax_nopriv_dne_save_onesignal_player_id', [$this, 'save_onesignal_player_id']);
+        add_action('wp_ajax_save_onesignal_player_id', [$this, 'save_onesignal_player_id']);
+        add_action('wp_ajax_nopriv_save_onesignal_player_id', [$this, 'save_onesignal_player_id']);
+        add_action('wp_ajax_remove_onesignal_player_id', [$this, 'remove_onesignal_player_id']);
+        
 
         // Test notification (admin only)
         add_action('wp_ajax_dne_send_test_notification', [$this, 'send_test_notification']);
 
         // Process queue manually (admin only)
         add_action('wp_ajax_dne_process_queue_manually', [$this, 'process_queue_manually']);
+    }
+
+    public function remove_onesignal_player_id()
+    {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'remove_player_id')) {
+            wp_send_json_error('Security verification failed');
+            return;
+        }
+
+        $user_id = absint($_POST['user_id'] ?? 0);
+        if (!$user_id || $user_id !== get_current_user_id()) {
+            wp_send_json_error('Invalid user ID');
+            return;
+        }
+
+        delete_user_meta($user_id, 'onesignal_player_id');
+
+        wp_send_json_success();
     }
 
     /**
@@ -256,17 +279,19 @@ class Ajax_Handler
     public function save_onesignal_player_id()
     {
         // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'dne_ajax_nonce')) {
+        // if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'dne_ajax_nonce')) {
+        // Verify nonce (support new and legacy actions)
+        $nonce = $_POST['nonce'] ?? '';
+        if (!wp_verify_nonce($nonce, 'save_player_id') && !wp_verify_nonce($nonce, 'dne_ajax_nonce')) {
             wp_send_json_error('Security verification failed');
             return;
         }
 
-        $user_id = get_current_user_id();
+        // $user_id = get_current_user_id();
+        $user_id = absint($_POST['user_id'] ?? 0);
         if (!$user_id) {
-            wp_send_json_error('Not logged in');
-            return;
+            $user_id = get_current_user_id();
         }
-
         $player_id = sanitize_text_field($_POST['player_id'] ?? '');
         if (empty($player_id)) {
             wp_send_json_error('Invalid player ID');
