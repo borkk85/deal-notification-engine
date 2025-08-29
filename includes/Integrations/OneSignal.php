@@ -96,35 +96,16 @@ class OneSignal {
                 error_log('[DNE OneSignal] Sending to specific player ID: ' . $custom_player_id);
             }
         } else {
-            // For production - check if user has subscribed via tag or external ID
-            // First try external user ID (if OneSignal is set up to use WordPress user IDs)
-            $fields['include_external_user_ids'] = [(string)$user_id];
+            // For production - use External User ID (this is the WordPress user ID)
+            $fields['include_aliases'] = [
+                'external_id' => [(string)$user_id]
+            ];
             
-            // Also add filters for users who might be tagged with their role
-            $user = get_userdata($user_id);
-            if ($user) {
-                $filters = [];
-                foreach ($user->roles as $role) {
-                    if (strpos($role, 'um_deal') !== false) {
-                        // Add filter for users tagged with this role
-                        $filters[] = ['field' => 'tag', 'key' => 'role', 'relation' => '=', 'value' => $role];
-                        if (!empty($filters)) {
-                            $filters[] = ['operator' => 'OR'];
-                        }
-                    }
-                }
-                
-                // Add user ID tag filter
-                $filters[] = ['field' => 'tag', 'key' => 'user_id', 'relation' => '=', 'value' => (string)$user_id];
-                
-                if (!empty($filters)) {
-                    $fields['filters'] = $filters;
-                    unset($fields['include_external_user_ids']); // Use filters instead
-                }
-            }
+            // Set the target channel
+            $fields['target_channel'] = 'push';
             
             if (get_option('dne_debug_mode') === '1') {
-                error_log('[DNE OneSignal] Targeting user ' . $user_id . ' via external ID or tags');
+                error_log('[DNE OneSignal] Targeting user via External ID: ' . $user_id);
             }
         }
         
