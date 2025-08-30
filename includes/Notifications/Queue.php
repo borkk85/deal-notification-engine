@@ -263,7 +263,6 @@ class Queue {
             'sent_today' => 0
         ];
         
-        // Get queue counts
         $queue_stats = $wpdb->get_results(
             "SELECT status, COUNT(*) as count 
              FROM {$this->table_queue} 
@@ -276,7 +275,6 @@ class Queue {
             }
         }
         
-        // Get today's sent count
         $stats['sent_today'] = intval($wpdb->get_var(
             "SELECT COUNT(*) FROM {$this->table_log} 
              WHERE DATE(sent_at) = CURDATE() 
@@ -303,7 +301,6 @@ class Queue {
             $log_days
         ));
         
-        // Delete old processed queue items
         $queue_deleted = $wpdb->query($wpdb->prepare(
             "DELETE FROM {$this->table_queue} 
              WHERE status IN ('sent', 'failed') 

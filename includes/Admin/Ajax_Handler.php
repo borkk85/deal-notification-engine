@@ -34,11 +34,50 @@ class Ajax_Handler
         add_action('wp_ajax_remove_onesignal_player_id', [$this, 'remove_onesignal_player_id']);
         
 
+        add_action('wp_ajax_dne_onesignal_subscribed', [$this, 'track_onesignal_subscription']);
         // Test notification (admin only)
         add_action('wp_ajax_dne_send_test_notification', [$this, 'send_test_notification']);
 
         // Process queue manually (admin only)
         add_action('wp_ajax_dne_process_queue_manually', [$this, 'process_queue_manually']);
+    }
+
+public function track_onesignal_subscription()
+    {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'dne_ajax_nonce')) {
+            wp_send_json_error('Security verification failed');
+            return;
+        }
+
+        $user_id = get_current_user_id();
+        if (!$user_id) {
+            wp_send_json_error('Not logged in');
+            return;
+        }
+
+        // Mark user as having OneSignal enabled
+        update_user_meta($user_id, 'onesignal_subscribed', '1');
+        update_user_meta($user_id, 'onesignal_subscription_date', current_time('mysql'));
+        
+        // Ensure webpush is in their delivery methods
+        $delivery_methods = get_user_meta($user_id, 'notification_delivery_methods', true);
+        if (!is_array($delivery_methods)) {
+            $delivery_methods = [];
+        }
+        
+        if (!in_array('webpush', $delivery_methods)) {
+            $delivery_methods[] = 'webpush';
+            update_user_meta($user_id, 'notification_delivery_methods', $delivery_methods);
+        }
+
+        // Log the subscription
+        $this->log_preference_update($user_id, [
+            'action' => 'onesignal_subscribed',
+            'timestamp' => current_time('mysql')
+        ]);
+
+        wp_send_json_success('Subscription tracked');
     }
 
     public function remove_onesignal_player_id()

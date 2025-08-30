@@ -297,24 +297,71 @@ class Plugin
      */
     public function enqueue_scripts()
     {
-        // Only on pages where needed
-        if (is_page() || is_single()) {
+        // Only on pages where user preferences might be shown
+        if (!is_user_logged_in()) {
+            return;
+        }
+        
+        // Check if we're on a page that might have notification preferences
+        // You may need to adjust this condition based on your theme
+        $is_profile_page = is_page() && (
+            strpos(get_the_title(), 'Profile') !== false ||
+            strpos(get_the_title(), 'Account') !== false ||
+            strpos(get_the_title(), 'Settings') !== false ||
+            strpos(get_page_template_slug(), 'profile') !== false ||
+            strpos(get_page_template_slug(), 'account') !== false
+        );
+        
+        // Also load on Ultimate Member profile pages
+        $is_um_profile = function_exists('um_is_core_page');
+        
+        if ($is_profile_page || $is_um_profile || is_page() || is_single()) {
+            // Enqueue the script
             wp_enqueue_script(
                 'dne-frontend',
                 DNE_PLUGIN_URL . 'assets/js/frontend.js',
                 ['jquery'],
-                DNE_VERSION,
+                DNE_VERSION . '.2', // Bump version to force cache refresh
                 true
             );
 
-            wp_localize_script('dne-frontend', 'dne_ajax', [
+            // Prepare user data
+            $user_id = get_current_user_id();
+            $localize_data = [
                 'ajax_url' => admin_url('admin-ajax.php'),
-                // 'nonce' => wp_create_nonce('dne_ajax_nonce')
                 'nonce' => wp_create_nonce('dne_ajax_nonce'),
-                'save_player_nonce' => wp_create_nonce('save_player_id'),
-                'remove_player_id_nonce' => wp_create_nonce('remove_player_id'),
-                'user_id' => get_current_user_id()
-            ]);
+                'user_id' => $user_id,
+                'debug_mode' => get_option('dne_debug_mode', '0')
+            ];
+            
+            // Add user role info for debugging
+            if ($user_id) {
+                $user = wp_get_current_user();
+                $has_deal_role = false;
+                foreach ($user->roles as $role) {
+                    if (strpos($role, 'um_deal') !== false && strpos($role, 'tier') !== false) {
+                        $has_deal_role = true;
+                        break;
+                    }
+                }
+                $localize_data['has_deal_role'] = $has_deal_role ? '1' : '0';
+            }
+
+            wp_localize_script('dne-frontend', 'dne_ajax', $localize_data);
+            
+            // Add inline script to check OneSignal availability
+            if (get_option('dne_onesignal_enabled') === '1') {
+                wp_add_inline_script('dne-frontend', '
+                    // Check if OneSignal is available
+                    window.addEventListener("load", function() {
+                        if (typeof OneSignal === "undefined") {
+                            console.warn("[DNE] OneSignal SDK not detected. Please ensure OneSignal WordPress plugin is active.");
+                        } else {
+                            console.log("[DNE] OneSignal SDK detected");
+                        }
+                    });
+                ', 'before');
+            }
         }
     }
 
