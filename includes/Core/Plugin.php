@@ -316,12 +316,12 @@ class Plugin
         $is_um_profile = function_exists('um_is_core_page');
         
         if ($is_profile_page || $is_um_profile || is_page() || is_single()) {
-            // Enqueue the script
+            // Enqueue the script with updated version
             wp_enqueue_script(
                 'dne-frontend',
                 DNE_PLUGIN_URL . 'assets/js/frontend.js',
                 ['jquery'],
-                DNE_VERSION . '.2', // Bump version to force cache refresh
+                DNE_VERSION . '.3', // Bump version to force cache refresh
                 true
             );
 
@@ -345,19 +345,25 @@ class Plugin
                     }
                 }
                 $localize_data['has_deal_role'] = $has_deal_role ? '1' : '0';
+                
+                // Check if user has webpush enabled to prevent unnecessary OneSignal initialization
+                $delivery_methods = get_user_meta($user_id, 'notification_delivery_methods', true);
+                $localize_data['has_webpush'] = (is_array($delivery_methods) && in_array('webpush', $delivery_methods)) ? '1' : '0';
             }
 
             wp_localize_script('dne-frontend', 'dne_ajax', $localize_data);
             
-            // Add inline script to check OneSignal availability
-            if (get_option('dne_onesignal_enabled') === '1') {
+            // Only check OneSignal if it's enabled AND user might use it
+            if (get_option('dne_onesignal_enabled') === '1' && !empty($localize_data['has_webpush'])) {
                 wp_add_inline_script('dne-frontend', '
-                    // Check if OneSignal is available
+                    // Only initialize OneSignal checks if user has webpush enabled
                     window.addEventListener("load", function() {
-                        if (typeof OneSignal === "undefined") {
-                            console.warn("[DNE] OneSignal SDK not detected. Please ensure OneSignal WordPress plugin is active.");
-                        } else {
-                            console.log("[DNE] OneSignal SDK detected");
+                        if (dne_ajax.has_webpush === "1") {
+                            if (typeof OneSignal === "undefined") {
+                                console.warn("[DNE] OneSignal SDK not detected. Please ensure OneSignal WordPress plugin is active.");
+                            } else if (dne_ajax.debug_mode === "1") {
+                                console.log("[DNE] OneSignal SDK detected");
+                            }
                         }
                     });
                 ', 'before');

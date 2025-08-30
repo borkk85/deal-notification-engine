@@ -4,7 +4,7 @@ namespace DNE\Admin;
 
 /**
  * Handles all AJAX requests for the plugin
- * Migrated from theme for better security
+ * Enhanced with proper OneSignal subscription/unsubscription tracking
  */
 class Ajax_Handler
 {
@@ -26,23 +26,32 @@ class Ajax_Handler
         add_action('wp_ajax_disconnect_telegram', [$this, 'disconnect_telegram']);
         add_action('wp_ajax_nopriv_disconnect_telegram', [$this, 'disconnect_telegram']);
 
-        // OneSignal player ID
+        // OneSignal subscription tracking
+        add_action('wp_ajax_dne_onesignal_subscribed', [$this, 'track_onesignal_subscription']);
+        add_action('wp_ajax_dne_onesignal_unsubscribed', [$this, 'track_onesignal_unsubscription']);
+        
+        // Legacy OneSignal player ID actions (for backwards compatibility)
         add_action('wp_ajax_dne_save_onesignal_player_id', [$this, 'save_onesignal_player_id']);
         add_action('wp_ajax_nopriv_dne_save_onesignal_player_id', [$this, 'save_onesignal_player_id']);
         add_action('wp_ajax_save_onesignal_player_id', [$this, 'save_onesignal_player_id']);
         add_action('wp_ajax_nopriv_save_onesignal_player_id', [$this, 'save_onesignal_player_id']);
         add_action('wp_ajax_remove_onesignal_player_id', [$this, 'remove_onesignal_player_id']);
-        
 
-        add_action('wp_ajax_dne_onesignal_subscribed', [$this, 'track_onesignal_subscription']);
         // Test notification (admin only)
         add_action('wp_ajax_dne_send_test_notification', [$this, 'send_test_notification']);
 
         // Process queue manually (admin only)
         add_action('wp_ajax_dne_process_queue_manually', [$this, 'process_queue_manually']);
+        
+        // OneSignal verification and cleanup
+        add_action('wp_ajax_dne_verify_onesignal_subscription', [$this, 'verify_onesignal_subscription']);
+        add_action('wp_ajax_dne_clear_onesignal_data', [$this, 'clear_onesignal_data']);
     }
 
-public function track_onesignal_subscription()
+    /**
+     * Track OneSignal subscription
+     */
+    public function track_onesignal_subscription()
     {
         // Verify nonce
         if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'dne_ajax_nonce')) {
@@ -56,9 +65,15 @@ public function track_onesignal_subscription()
             return;
         }
 
+        // Store player ID if provided
+        if (isset($_POST['player_id']) && !empty($_POST['player_id'])) {
+            update_user_meta($user_id, 'onesignal_player_id', sanitize_text_field($_POST['player_id']));
+        }
+
         // Mark user as having OneSignal enabled
         update_user_meta($user_id, 'onesignal_subscribed', '1');
         update_user_meta($user_id, 'onesignal_subscription_date', current_time('mysql'));
+        update_user_meta($user_id, 'onesignal_external_id_set', '1');
         
         // Ensure webpush is in their delivery methods
         $delivery_methods = get_user_meta($user_id, 'notification_delivery_methods', true);
@@ -74,34 +89,65 @@ public function track_onesignal_subscription()
         // Log the subscription
         $this->log_preference_update($user_id, [
             'action' => 'onesignal_subscribed',
-            'timestamp' => current_time('mysql')
+            'timestamp' => current_time('mysql'),
+            'player_id' => isset($_POST['player_id']) ? substr($_POST['player_id'], 0, 10) . '...' : 'not provided'
         ]);
+
+        if (get_option('dne_debug_mode') === '1') {
+            error_log('[DNE Ajax] OneSignal subscription tracked for user ' . $user_id);
+        }
 
         wp_send_json_success('Subscription tracked');
     }
 
-    public function remove_onesignal_player_id()
+    /**
+     * Track OneSignal unsubscription
+     */
+    public function track_onesignal_unsubscription()
     {
         // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'remove_player_id')) {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'dne_ajax_nonce')) {
             wp_send_json_error('Security verification failed');
             return;
         }
 
-        $user_id = absint($_POST['user_id'] ?? 0);
-        if (!$user_id || $user_id !== get_current_user_id()) {
-            wp_send_json_error('Invalid user ID');
+        $user_id = get_current_user_id();
+        if (!$user_id) {
+            wp_send_json_error('Not logged in');
             return;
         }
 
+        // Clear OneSignal metadata
+        delete_user_meta($user_id, 'onesignal_subscribed');
         delete_user_meta($user_id, 'onesignal_player_id');
+        delete_user_meta($user_id, 'onesignal_external_id_set');
+        update_user_meta($user_id, 'onesignal_unsubscription_date', current_time('mysql'));
+        
+        // Remove webpush from delivery methods
+        $delivery_methods = get_user_meta($user_id, 'notification_delivery_methods', true);
+        if (is_array($delivery_methods)) {
+            $delivery_methods = array_filter($delivery_methods, function($method) {
+                return $method !== 'webpush';
+            });
+            update_user_meta($user_id, 'notification_delivery_methods', array_values($delivery_methods));
+        }
 
-        wp_send_json_success();
+        // Log the unsubscription
+        $this->log_preference_update($user_id, [
+            'action' => 'onesignal_unsubscribed',
+            'timestamp' => current_time('mysql')
+        ]);
+
+        if (get_option('dne_debug_mode') === '1') {
+            error_log('[DNE Ajax] OneSignal unsubscription tracked for user ' . $user_id);
+        }
+
+        wp_send_json_success('Unsubscription tracked');
     }
 
     /**
      * Save user notification preferences
-     * Enhanced security over theme version
+     * Enhanced to properly handle OneSignal state changes
      */
     public function save_preferences()
     {
@@ -144,6 +190,12 @@ public function track_onesignal_subscription()
             return;
         }
 
+        // Get previous delivery methods to detect changes
+        $previous_methods = get_user_meta($user_id, 'notification_delivery_methods', true);
+        if (!is_array($previous_methods)) {
+            $previous_methods = [];
+        }
+
         // Sanitize and save preferences
         $notifications_enabled = isset($_POST['notifications_enabled']) && $_POST['notifications_enabled'] === '1' ? '1' : '0';
         update_user_meta($user_id, 'notifications_enabled', $notifications_enabled);
@@ -153,6 +205,18 @@ public function track_onesignal_subscription()
         $delivery_methods = isset($_POST['delivery_methods']) ? (array)$_POST['delivery_methods'] : [];
         $delivery_methods = array_intersect($delivery_methods, $allowed_methods);
         update_user_meta($user_id, 'notification_delivery_methods', $delivery_methods);
+
+        // Check if webpush was removed
+        if (in_array('webpush', $previous_methods) && !in_array('webpush', $delivery_methods)) {
+            // User unchecked webpush - clear OneSignal data
+            delete_user_meta($user_id, 'onesignal_subscribed');
+            delete_user_meta($user_id, 'onesignal_external_id_set');
+            // Keep player_id for potential re-subscription
+            
+            if (get_option('dne_debug_mode') === '1') {
+                error_log('[DNE Ajax] Webpush removed from user ' . $user_id . ' delivery methods');
+            }
+        }
 
         // Save and validate discount filter (10-90%, steps of 5)
         $discount = isset($_POST['user_discount_filter']) ? intval($_POST['user_discount_filter']) : '';
@@ -185,6 +249,7 @@ public function track_onesignal_subscription()
         $this->log_preference_update($user_id, [
             'enabled' => $notifications_enabled,
             'methods' => $delivery_methods,
+            'previous_methods' => $previous_methods,
             'filters' => [
                 'discount' => $discount,
                 'categories' => count($valid_categories),
@@ -313,12 +378,10 @@ public function track_onesignal_subscription()
     }
 
     /**
-     * Save OneSignal player ID
+     * Save OneSignal player ID (legacy support)
      */
     public function save_onesignal_player_id()
     {
-        // Verify nonce
-        // if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'dne_ajax_nonce')) {
         // Verify nonce (support new and legacy actions)
         $nonce = $_POST['nonce'] ?? '';
         if (!wp_verify_nonce($nonce, 'save_player_id') && !wp_verify_nonce($nonce, 'dne_ajax_nonce')) {
@@ -326,11 +389,11 @@ public function track_onesignal_subscription()
             return;
         }
 
-        // $user_id = get_current_user_id();
         $user_id = absint($_POST['user_id'] ?? 0);
         if (!$user_id) {
             $user_id = get_current_user_id();
         }
+        
         $player_id = sanitize_text_field($_POST['player_id'] ?? '');
         if (empty($player_id)) {
             wp_send_json_error('Invalid player ID');
@@ -341,11 +404,35 @@ public function track_onesignal_subscription()
 
         // Log the subscription
         $this->log_preference_update($user_id, [
-            'action' => 'onesignal_subscribed',
+            'action' => 'onesignal_player_id_saved',
             'player_id' => substr($player_id, 0, 10) . '...' // Log partial ID for privacy
         ]);
 
         wp_send_json_success('Player ID saved');
+    }
+
+    /**
+     * Remove OneSignal player ID (legacy support)
+     */
+    public function remove_onesignal_player_id()
+    {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'remove_player_id')) {
+            wp_send_json_error('Security verification failed');
+            return;
+        }
+
+        $user_id = absint($_POST['user_id'] ?? 0);
+        if (!$user_id || $user_id !== get_current_user_id()) {
+            wp_send_json_error('Invalid user ID');
+            return;
+        }
+
+        delete_user_meta($user_id, 'onesignal_player_id');
+        delete_user_meta($user_id, 'onesignal_subscribed');
+        delete_user_meta($user_id, 'onesignal_external_id_set');
+
+        wp_send_json_success();
     }
 
     /**
@@ -445,11 +532,6 @@ public function track_onesignal_subscription()
                 $onesignal = new \DNE\Integrations\OneSignal();
                 $result = $onesignal->send_notification($user_id, $post, $custom_onesignal ?: null);
                 break;
-
-                // case 'webpush':
-                //     $onesignal = new \DNE\Integrations\OneSignal();
-                //     $result = $onesignal->send_notification($user_id, $post);
-                //     break;
         }
 
         // Restore original values if we overrode them
@@ -518,5 +600,147 @@ public function track_onesignal_subscription()
         $engine->process_queue();
 
         wp_send_json_success('Queue processing initiated');
+    }
+    
+    /**
+     * Verify OneSignal subscription with backend
+     */
+    public function verify_onesignal_subscription()
+    {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'dne_ajax_nonce')) {
+            wp_send_json_error('Security verification failed');
+            return;
+        }
+
+        $user_id = get_current_user_id();
+        if (!$user_id) {
+            wp_send_json_error('Not logged in');
+            return;
+        }
+
+        $player_id = sanitize_text_field($_POST['player_id'] ?? '');
+        if (empty($player_id)) {
+            wp_send_json_error('No player ID provided');
+            return;
+        }
+
+        // Get OneSignal credentials
+        $app_id = get_option('dne_onesignal_app_id');
+        $api_key = get_option('dne_onesignal_api_key');
+        
+        if (empty($app_id) || empty($api_key)) {
+            // Try OneSignal plugin settings
+            $onesignal_settings = get_option('OneSignalWPSetting');
+            if ($onesignal_settings && is_array($onesignal_settings)) {
+                $app_id = $app_id ?: ($onesignal_settings['app_id'] ?? '');
+                $api_key = $api_key ?: ($onesignal_settings['app_rest_api_key'] ?? '');
+            }
+        }
+
+        if (empty($app_id) || empty($api_key)) {
+            wp_send_json_error('OneSignal not configured');
+            return;
+        }
+
+        // Verify player exists in OneSignal
+        $response = wp_remote_get(
+            "https://onesignal.com/api/v1/players/{$player_id}?app_id={$app_id}",
+            [
+                'headers' => [
+                    'Authorization' => 'Basic ' . $api_key
+                ],
+                'timeout' => 10
+            ]
+        );
+
+        if (is_wp_error($response)) {
+            wp_send_json_error('Failed to verify with OneSignal');
+            return;
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        
+        if ($code === 200) {
+            $body = json_decode(wp_remote_retrieve_body($response), true);
+            
+            // Check if player is subscribed and has correct external ID
+            $is_subscribed = isset($body['notification_types']) && $body['notification_types'] > 0;
+            $external_user_id = $body['external_user_id'] ?? null;
+            
+            if ($is_subscribed && $external_user_id === (string)$user_id) {
+                // Valid subscription
+                update_user_meta($user_id, 'onesignal_player_id', $player_id);
+                update_user_meta($user_id, 'onesignal_subscribed', '1');
+                update_user_meta($user_id, 'onesignal_external_id_set', '1');
+                
+                wp_send_json_success('Subscription verified');
+            } else {
+                // Invalid or mismatched subscription
+                delete_user_meta($user_id, 'onesignal_subscribed');
+                delete_user_meta($user_id, 'onesignal_external_id_set');
+                
+                if (get_option('dne_debug_mode') === '1') {
+                    error_log('[DNE] OneSignal verification failed - Subscribed: ' . ($is_subscribed ? 'yes' : 'no') . 
+                             ', External ID: ' . ($external_user_id ?? 'null') . ', Expected: ' . $user_id);
+                }
+                
+                wp_send_json_error('Subscription invalid or mismatched');
+            }
+        } else if ($code === 404) {
+            // Player doesn't exist
+            delete_user_meta($user_id, 'onesignal_player_id');
+            delete_user_meta($user_id, 'onesignal_subscribed');
+            delete_user_meta($user_id, 'onesignal_external_id_set');
+            
+            wp_send_json_error('Player not found in OneSignal');
+        } else {
+            wp_send_json_error('Verification failed with code: ' . $code);
+        }
+    }
+    
+    /**
+     * Clear all OneSignal data for a user
+     */
+    public function clear_onesignal_data()
+    {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'dne_ajax_nonce')) {
+            wp_send_json_error('Security verification failed');
+            return;
+        }
+
+        $user_id = get_current_user_id();
+        if (!$user_id) {
+            wp_send_json_error('Not logged in');
+            return;
+        }
+
+        // Clear all OneSignal related meta
+        delete_user_meta($user_id, 'onesignal_player_id');
+        delete_user_meta($user_id, 'onesignal_subscribed');
+        delete_user_meta($user_id, 'onesignal_external_id_set');
+        delete_user_meta($user_id, 'onesignal_subscription_date');
+        
+        // Remove webpush from delivery methods
+        $delivery_methods = get_user_meta($user_id, 'notification_delivery_methods', true);
+        if (is_array($delivery_methods)) {
+            $delivery_methods = array_filter($delivery_methods, function($method) {
+                return $method !== 'webpush';
+            });
+            update_user_meta($user_id, 'notification_delivery_methods', array_values($delivery_methods));
+        }
+        
+        // Log the action
+        $this->log_preference_update($user_id, [
+            'action' => 'onesignal_data_cleared',
+            'timestamp' => current_time('mysql')
+        ]);
+        
+        if (get_option('dne_debug_mode') === '1') {
+            error_log('[DNE] OneSignal data cleared for user ' . $user_id);
+        }
+
+        wp_send_json_success('OneSignal data cleared');
     }
 }

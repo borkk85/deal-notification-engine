@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Deal Notification Engine
  * Description: Advanced notification system for deal alerts with multi-platform delivery
- * Version: 1.1.4
+ * Version: 1.1.6
  * Author: borkk
  * Text Domain: deal-notification-engine
  */
@@ -13,7 +13,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Plugin constants
-define('DNE_VERSION', '1.1.4');
+define('DNE_VERSION', '1.1.6');
 define('DNE_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('DNE_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('DNE_PLUGIN_BASENAME', plugin_basename(__FILE__));

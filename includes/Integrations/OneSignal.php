@@ -3,7 +3,7 @@ namespace DNE\Integrations;
 
 /**
  * OneSignal Web Push Integration
- * Works alongside the official OneSignal WordPress plugin
+ * Enhanced with proper External ID verification
  */
 class OneSignal {
     
@@ -34,7 +34,7 @@ class OneSignal {
     
     /**
      * Send push notification
-     * Can target either a specific player ID (for testing) or user segments
+     * Enhanced to check if user has External ID set before sending
      */
     public function send_notification($user_id, $post, $custom_player_id = null) {
         // Check if OneSignal is enabled
@@ -46,6 +46,21 @@ class OneSignal {
             return [
                 'success' => false,
                 'message' => 'OneSignal not configured. Please check if OneSignal plugin is installed and configured.'
+            ];
+        }
+        
+        // Check if user has External ID set (indicating they're properly subscribed)
+        $has_external_id = get_user_meta($user_id, 'onesignal_external_id_set', true);
+        $is_subscribed = get_user_meta($user_id, 'onesignal_subscribed', true);
+        
+        if (!$custom_player_id && (!$has_external_id || !$is_subscribed)) {
+            if (get_option('dne_debug_mode') === '1') {
+                error_log('[DNE OneSignal] User ' . $user_id . ' does not have External ID set or is not subscribed');
+                error_log('[DNE OneSignal] External ID set: ' . ($has_external_id ? 'yes' : 'no') . ', Subscribed: ' . ($is_subscribed ? 'yes' : 'no'));
+            }
+            return [
+                'success' => false,
+                'message' => 'User has not completed push notification setup or has unsubscribed'
             ];
         }
         
@@ -88,7 +103,7 @@ class OneSignal {
             }
         }
         
-        // Target specific player or segments
+        // Target specific player or use External ID
         if (!empty($custom_player_id)) {
             // For testing - send to specific player ID
             $fields['include_player_ids'] = [$custom_player_id];
@@ -96,7 +111,7 @@ class OneSignal {
                 error_log('[DNE OneSignal] Sending to specific player ID: ' . $custom_player_id);
             }
         } else {
-            // For production - use External User ID (this is the WordPress user ID)
+            // For production - use External User ID (WordPress user ID)
             $fields['include_aliases'] = [
                 'external_id' => [(string)$user_id]
             ];
@@ -113,21 +128,11 @@ class OneSignal {
             error_log('[DNE OneSignal] API Payload: ' . print_r($fields, true));
         }
         
-        // Determine API key type (Rich or User/REST)
-        $auth_header = 'Basic ' . $this->api_key;
-        if (strpos($this->api_key, '-') !== false && strlen($this->api_key) < 48) {
-            // Looks like a User Auth Key (has dashes and is shorter)
-            $auth_header = 'Basic ' . $this->api_key;
-        } else if (strlen($this->api_key) === 48) {
-            // Standard REST API key
-            $auth_header = 'Basic ' . $this->api_key;
-        }
-        
         // Send via OneSignal API
         $response = wp_remote_post('https://onesignal.com/api/v1/notifications', [
             'headers' => [
                 'Content-Type' => 'application/json; charset=utf-8',
-                'Authorization' => $auth_header
+                'Authorization' => 'Basic ' . $this->api_key
             ],
             'body' => json_encode($fields),
             'timeout' => 30
@@ -153,6 +158,20 @@ class OneSignal {
         
         if (isset($body['id'])) {
             $recipients = isset($body['recipients']) ? $body['recipients'] : 0;
+            
+            // If no recipients despite successful API call, user might not be properly subscribed
+            if ($recipients === 0 && !$custom_player_id) {
+                // Clear the External ID flag as it's not working
+                delete_user_meta($user_id, 'onesignal_external_id_set');
+                delete_user_meta($user_id, 'onesignal_subscribed');
+                
+                return [
+                    'success' => false,
+                    'message' => 'User appears to be unsubscribed or External ID not properly set. User needs to re-enable push notifications.',
+                    'notification_id' => $body['id']
+                ];
+            }
+            
             return [
                 'success' => true,
                 'message' => 'Push notification sent (Recipients: ' . $recipients . ')',
@@ -167,7 +186,10 @@ class OneSignal {
             if (is_array($body['errors'])) {
                 $errors = $body['errors'];
                 if (in_array('All included players are not subscribed', $errors)) {
-                    $error_message = 'User has not subscribed to push notifications or invalid player ID';
+                    // Clear External ID flag as user is not properly subscribed
+                    delete_user_meta($user_id, 'onesignal_external_id_set');
+                    delete_user_meta($user_id, 'onesignal_subscribed');
+                    $error_message = 'User has not subscribed to push notifications or External ID is invalid';
                 } else if (in_array('Invalid app_id format', $errors)) {
                     $error_message = 'Invalid OneSignal App ID format';
                 } else if (in_array('Unauthorized', $errors)) {
