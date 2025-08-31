@@ -1,13 +1,12 @@
 /**
  * Deal Notification Engine - Frontend JavaScript
- * FIXED: Proper OneSignal lifecycle management and subscription verification
+ * SDK v16 Compatible - Fixed subscription handling
  */
 
 jQuery(document).ready(function($) {
     
     // Track previous delivery methods to detect changes
     var previousDeliveryMethods = [];
-    var isOneSignalInitialized = false;
     
     // Store initial state on page load
     function captureInitialState() {
@@ -77,7 +76,7 @@ jQuery(document).ready(function($) {
             $button.text('Disabling push notifications...').prop('disabled', true);
             
             try {
-                await handleOneSignalFullUnsubscription();
+                await handleOneSignalUnsubscription();
                 showNotice('info', 'Push notifications disabled.');
             } catch (error) {
                 console.error('[DNE] Error disabling push notifications:', error);
@@ -132,19 +131,13 @@ jQuery(document).ready(function($) {
     });
     
     /**
-     * Handle OneSignal subscription with proper verification
+     * Handle OneSignal subscription with SDK v16 methods
      */
     async function handleOneSignalSubscription() {
         return new Promise((resolve) => {
-            // Make sure OneSignal is loaded
-            if (typeof window.OneSignal === 'undefined') {
+            if (typeof window.OneSignalDeferred === 'undefined') {
                 resolve({ success: false, message: 'OneSignal is not loaded. Please ensure the OneSignal plugin is active.' });
                 return;
-            }
-            
-            // Initialize OneSignal if not already done
-            if (!isOneSignalInitialized) {
-                window.OneSignalDeferred = window.OneSignalDeferred || [];
             }
             
             window.OneSignalDeferred.push(async function(OneSignal) {
@@ -153,7 +146,7 @@ jQuery(document).ready(function($) {
                     
                     if (isDebug) console.log('[DNE] Starting OneSignal subscription process...');
                     
-                    // First, ensure we're starting fresh
+                    // First, clear any existing External ID to start fresh
                     try {
                         await OneSignal.logout();
                         if (isDebug) console.log('[DNE] Cleared any existing External ID');
@@ -161,26 +154,37 @@ jQuery(document).ready(function($) {
                         // Ignore logout errors
                     }
                     
+                    // Check browser permission state
+                    const browserPermission = Notification.permission;
+                    if (isDebug) console.log('[DNE] Browser permission:', browserPermission);
+                    
                     // Check current subscription status
                     let isSubscribed = await OneSignal.User.PushSubscription.optedIn;
                     
-                    if (!isSubscribed) {
-                        // Need to prompt for permission
-                        if (isDebug) console.log('[DNE] User not subscribed, prompting...');
+                    if (browserPermission === 'granted' && !isSubscribed) {
+                        // Permission already granted but not subscribed - use optIn()
+                        if (isDebug) console.log('[DNE] Permission granted but not subscribed, using optIn()');
+                        await OneSignal.User.PushSubscription.optIn();
                         
-                        // Show the slidedown prompt
-                        await OneSignal.Slidedown.promptPush();
-                        
-                        // Wait a bit for the user to respond
+                        // Wait for subscription to complete
                         await new Promise(r => setTimeout(r, 1000));
                         
-                        // Check if user actually subscribed
+                        // Verify subscription
+                        isSubscribed = await OneSignal.User.PushSubscription.optedIn;
+                        
+                    } else if (browserPermission === 'default') {
+                        // Need to prompt for permission
+                        if (isDebug) console.log('[DNE] Permission not granted, showing prompt');
+                        
+                        await OneSignal.Slidedown.promptPush();
+                        
+                        // Wait for user response
+                        await new Promise(r => setTimeout(r, 1000));
+                        
+                        // Check if user subscribed
                         isSubscribed = await OneSignal.User.PushSubscription.optedIn;
                         
                         if (!isSubscribed) {
-                            if (isDebug) console.log('[DNE] User declined or blocked notifications');
-                            
-                            // Check if permanently denied
                             if (Notification.permission === 'denied') {
                                 resolve({ 
                                     success: false, 
@@ -188,64 +192,72 @@ jQuery(document).ready(function($) {
                                 });
                                 return;
                             }
-                            
                             resolve({ 
                                 success: false, 
-                                message: 'Push notifications were not enabled. Please accept the notification prompt to enable them.' 
+                                message: 'Push notifications were not enabled. Please accept the notification prompt.' 
                             });
                             return;
                         }
-                    }
-                    
-                    // User is subscribed, wait for player ID to be available
-                    let playerId = await OneSignal.User.PushSubscription.id;
-                    let attempts = 0;
-                    
-                    while (!playerId && attempts < 10) {
-                        await new Promise(r => setTimeout(r, 500));
-                        playerId = await OneSignal.User.PushSubscription.id;
-                        attempts++;
-                    }
-                    
-                    if (!playerId) {
-                        if (isDebug) console.log('[DNE] No player ID available after waiting');
+                    } else if (browserPermission === 'denied') {
                         resolve({ 
                             success: false, 
-                            message: 'Unable to complete push notification setup. Please try again.' 
+                            message: 'Push notifications are blocked in your browser. Please enable them in browser settings.' 
                         });
                         return;
                     }
                     
-                    if (isDebug) console.log('[DNE] User subscribed with player ID:', playerId);
-                    
-                    // Now set External ID
-                    const userId = dne_ajax.user_id;
-                    await OneSignal.login(String(userId));
-                    
-                    // Set additional tags
-                    await OneSignal.User.addTags({
-                        wordpress_user_id: String(userId),
-                        wordpress_user: 'true',
-                        subscription_date: new Date().toISOString()
-                    });
-                    
-                    if (isDebug) console.log('[DNE] External ID and tags set successfully');
-                    
-                    // Track subscription in WordPress
-                    $.post(dne_ajax.ajax_url, {
-                        action: 'dne_onesignal_subscribed',
-                        user_id: userId,
-                        player_id: playerId,
-                        nonce: dne_ajax.nonce
-                    });
-                    
-                    // Mark as initialized
-                    isOneSignalInitialized = true;
-                    
-                    // Update UI indicator
-                    updatePushStatusIndicator(true);
-                    
-                    resolve({ success: true });
+                    // If already subscribed or just subscribed, set External ID
+                    if (isSubscribed) {
+                        // Get player ID
+                        let playerId = await OneSignal.User.PushSubscription.id;
+                        let attempts = 0;
+                        
+                        while (!playerId && attempts < 10) {
+                            await new Promise(r => setTimeout(r, 500));
+                            playerId = await OneSignal.User.PushSubscription.id;
+                            attempts++;
+                        }
+                        
+                        if (!playerId) {
+                            if (isDebug) console.log('[DNE] No player ID available');
+                            resolve({ 
+                                success: false, 
+                                message: 'Unable to complete push notification setup. Please try again.' 
+                            });
+                            return;
+                        }
+                        
+                        if (isDebug) console.log('[DNE] User subscribed with player ID:', playerId);
+                        
+                        // Set External ID
+                        const userId = dne_ajax.user_id;
+                        await OneSignal.login(String(userId));
+                        
+                        // Set tags
+                        await OneSignal.User.addTags({
+                            wordpress_user_id: String(userId),
+                            wordpress_user: 'true',
+                            subscription_date: new Date().toISOString()
+                        });
+                        
+                        if (isDebug) console.log('[DNE] External ID and tags set successfully');
+                        
+                        // Track in WordPress
+                        $.post(dne_ajax.ajax_url, {
+                            action: 'dne_onesignal_subscribed',
+                            user_id: userId,
+                            player_id: playerId,
+                            nonce: dne_ajax.nonce
+                        });
+                        
+                        updatePushStatusIndicator(true);
+                        resolve({ success: true });
+                    } else {
+                        resolve({ 
+                            success: false, 
+                            message: 'Unable to enable push notifications.' 
+                        });
+                    }
                     
                 } catch (error) {
                     console.error('[DNE] Error in subscription process:', error);
@@ -259,12 +271,11 @@ jQuery(document).ready(function($) {
     }
     
     /**
-     * Handle complete OneSignal unsubscription
-     * This properly opts out AND removes the External ID without creating new subscriptions
+     * Handle OneSignal unsubscription with SDK v16 methods
      */
-    async function handleOneSignalFullUnsubscription() {
+    async function handleOneSignalUnsubscription() {
         return new Promise((resolve) => {
-            if (typeof window.OneSignal === 'undefined' || !isOneSignalInitialized) {
+            if (typeof window.OneSignalDeferred === 'undefined') {
                 resolve(false);
                 return;
             }
@@ -273,26 +284,15 @@ jQuery(document).ready(function($) {
                 try {
                     const isDebug = dne_ajax.debug_mode === '1';
                     
-                    if (isDebug) console.log('[DNE] Starting complete OneSignal unsubscription...');
+                    if (isDebug) console.log('[DNE] Starting OneSignal unsubscription...');
                     
-                    // First, opt out from push notifications
-                    try {
-                        await OneSignal.User.PushSubscription.optOut();
-                        if (isDebug) console.log('[DNE] Opted out from push notifications');
-                    } catch (e) {
-                        if (isDebug) console.log('[DNE] Error opting out:', e);
-                    }
+                    // First opt out from push
+                    await OneSignal.User.PushSubscription.optOut();
+                    if (isDebug) console.log('[DNE] Opted out from push notifications');
                     
-                    // Then remove External ID association
-                    try {
-                        await OneSignal.logout();
-                        if (isDebug) console.log('[DNE] OneSignal logout completed');
-                    } catch (e) {
-                        if (isDebug) console.log('[DNE] Error during logout:', e);
-                    }
-                    
-                    // Mark as not initialized to prevent further operations
-                    isOneSignalInitialized = false;
+                    // Then remove External ID
+                    await OneSignal.logout();
+                    if (isDebug) console.log('[DNE] Removed External ID');
                     
                     // Update UI
                     updatePushStatusIndicator(false);
@@ -410,89 +410,33 @@ jQuery(document).ready(function($) {
         webPushLabel.append(indicator);
     }
     
-    /**
-     * Add force refresh button for OneSignal
-     */
-    function addOneSignalRefreshButton() {
-        if ($('#delivery_webpush').length > 0 && $('#onesignal-refresh').length === 0) {
-            var refreshBtn = $('<button type="button" id="onesignal-refresh" class="um-button button-small" style="margin-left: 10px;">Reset Push Settings</button>');
-            $('#delivery_webpush').parent().append(refreshBtn);
-            
-            refreshBtn.on('click', async function(e) {
-                e.preventDefault();
-                
-                if (!confirm('This will reset your push notification settings. You will need to re-enable them. Continue?')) {
-                    return;
-                }
-                
-                var $btn = $(this);
-                $btn.text('Resetting...').prop('disabled', true);
-                
-                try {
-                    // Clear OneSignal state
-                    if (typeof window.OneSignal !== 'undefined') {
-                        await OneSignal.User.PushSubscription.optOut();
-                        await OneSignal.logout();
-                    }
-                    
-                    // Clear WordPress meta
-                    $.post(dne_ajax.ajax_url, {
-                        action: 'dne_clear_onesignal_data',
-                        user_id: dne_ajax.user_id,
-                        nonce: dne_ajax.nonce
-                    });
-                    
-                    // Uncheck the webpush checkbox
-                    $('#delivery_webpush').prop('checked', false);
-                    updatePushStatusIndicator(false);
-                    
-                    showNotice('success', 'Push notification settings have been reset.');
-                    
-                } catch (error) {
-                    console.error('[DNE] Error resetting:', error);
-                    showNotice('error', 'Failed to reset. Please try refreshing the page.');
-                }
-                
-                $btn.text('Reset Push Settings').prop('disabled', false);
-            });
-        }
-    }
-    
-    // Initialize OneSignal status check ONLY if user has webpush enabled
+    // Initialize OneSignal status check on page load
     if (typeof dne_ajax !== 'undefined' && dne_ajax.user_id && dne_ajax.user_id !== '0') {
         // Check if user has webpush in their saved preferences
         var hasWebPush = previousDeliveryMethods.includes('webpush') || $('#delivery_webpush').is(':checked');
         
         if (hasWebPush) {
-            initializeOneSignalStatus();
+            checkOneSignalStatus();
         } else {
-            // Don't initialize OneSignal at all if webpush isn't enabled
             updatePushStatusIndicator(false);
         }
-        
-        // Add the reset button
-        addOneSignalRefreshButton();
     }
     
     /**
-     * Check OneSignal status on page load (without modifying subscription)
-     * ONLY runs if user has webpush enabled
+     * Check OneSignal status on page load
      */
-    function initializeOneSignalStatus() {
+    function checkOneSignalStatus() {
         var isDebug = dne_ajax.debug_mode === '1';
         
         if (isDebug) console.log('[DNE] Checking OneSignal status for user:', dne_ajax.user_id);
         
-        // Don't create OneSignalDeferred unless we need it
-        if (typeof window.OneSignal === 'undefined') {
-            if (isDebug) console.log('[DNE] OneSignal SDK not loaded, skipping status check');
+        if (typeof window.OneSignalDeferred === 'undefined') {
+            if (isDebug) console.log('[DNE] OneSignal SDK not loaded');
             updatePushStatusIndicator(false);
             return;
         }
         
-        window.OneSignalDeferred = window.OneSignalDeferred || [];
-        
-        OneSignalDeferred.push(async function(OneSignal) {
+        window.OneSignalDeferred.push(async function(OneSignal) {
             try {
                 await new Promise(resolve => setTimeout(resolve, 1000));
                 
@@ -507,36 +451,38 @@ jQuery(document).ready(function($) {
                     console.log('  - External ID:', externalId);
                 }
                 
-                // Verify this matches our expected state
-                if (isSubscribed && playerId && externalId === String(dne_ajax.user_id)) {
+                // Update UI based on status
+                if (isSubscribed && externalId === String(dne_ajax.user_id)) {
                     updatePushStatusIndicator(true);
-                    isOneSignalInitialized = true;
+                } else if (playerId && !isSubscribed && Notification.permission === 'granted') {
+                    // Zombie state - has player ID but not subscribed with permission granted
+                    if (isDebug) console.log('[DNE] Detected zombie state, attempting to fix...');
                     
-                    // Verify with backend that this subscription is valid
-                    $.post(dne_ajax.ajax_url, {
-                        action: 'dne_verify_onesignal_subscription',
-                        user_id: dne_ajax.user_id,
-                        player_id: playerId,
-                        nonce: dne_ajax.nonce
-                    }, function(response) {
-                        if (!response.success) {
-                            // Backend says subscription is invalid
-                            if (isDebug) console.log('[DNE] Backend verification failed, clearing state');
-                            handleOneSignalFullUnsubscription();
-                        }
-                    });
+                    // Try to fix by opting in
+                    try {
+                        await OneSignal.User.PushSubscription.optIn();
+                        await new Promise(r => setTimeout(r, 1000));
+                        
+                        // Set External ID
+                        await OneSignal.login(String(dne_ajax.user_id));
+                        
+                        updatePushStatusIndicator(true);
+                        
+                        // Track in WordPress
+                        $.post(dne_ajax.ajax_url, {
+                            action: 'dne_onesignal_subscribed',
+                            user_id: dne_ajax.user_id,
+                            player_id: playerId,
+                            nonce: dne_ajax.nonce
+                        });
+                        
+                        if (isDebug) console.log('[DNE] Fixed zombie state');
+                    } catch (e) {
+                        if (isDebug) console.log('[DNE] Failed to fix zombie state:', e);
+                        updatePushStatusIndicator(false);
+                    }
                 } else {
                     updatePushStatusIndicator(false);
-                    
-                    // If there's a mismatch, clear the state
-                    if (externalId && externalId !== String(dne_ajax.user_id)) {
-                        if (isDebug) console.log('[DNE] External ID mismatch, clearing');
-                        try {
-                            await OneSignal.logout();
-                        } catch (e) {
-                            // Ignore errors
-                        }
-                    }
                 }
                 
             } catch (error) {
@@ -548,9 +494,7 @@ jQuery(document).ready(function($) {
     
     // Browser compatibility check on page load
     $(window).on('load', function() {
-        // Check if web push checkbox exists
         if ($('#delivery_webpush').length > 0) {
-            // Check browser support
             if (!('Notification' in window) || !('serviceWorker' in navigator)) {
                 $('#delivery_webpush').prop('disabled', true);
                 $('#delivery_webpush').parent().parent().append(
@@ -616,9 +560,6 @@ jQuery(document).ready(function($) {
         .browser-warning {
             font-size: 12px;
             font-style: italic;
-        }
-        #onesignal-refresh {
-            margin-top: 5px;
         }
     `;
     document.head.appendChild(style);
