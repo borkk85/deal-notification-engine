@@ -1,6 +1,5 @@
 <?php
 namespace DNE\Notifications;
-
 /**
  * Main notification processing engine - orchestrates the notification process
  */
@@ -85,75 +84,14 @@ class Engine {
      * Check if post is a deal
      */
     private function is_deal_post($post_id) {
-        // Allow all posts to be considered deals if they have:
-        // 1. Deal-related categories/tags
-        // 2. Product categories taxonomy
-        // 3. Store type taxonomy
-        // 4. Discount percentage in content
-        
-        // Check for product categories (your custom taxonomy)
-        $product_cats = wp_get_object_terms($post_id, 'product_categories', ['fields' => 'ids']);
-        if (!is_wp_error($product_cats) && !empty($product_cats)) {
-            return true; // Has product categories = likely a deal
+        // Strict rule per project: post must be in the 'active-deals' category
+        if (!function_exists('has_category') || !has_category('active-deals', $post_id)) {
+            // Allow manual override via post meta for edge cases
+            $override = get_post_meta($post_id, '_is_deal_post', true);
+            return $override === '1';
         }
-        
-        // Check for stores (your custom taxonomy)
-        $stores = wp_get_object_terms($post_id, 'store_type', ['fields' => 'ids']);
-        if (!is_wp_error($stores) && !empty($stores)) {
-            return true; // Has store = likely a deal
-        }
-        
-        // Check for discount percentage in content
-        $post = get_post($post_id);
-        if ($post) {
-            $content = $post->post_title . ' ' . $post->post_content;
-            if (preg_match('/\d+\s*%/', $content)) {
-                return true; // Has percentage = likely a deal
-            }
-        }
-        
-        // Check for deal-related categories
-        $categories = wp_get_post_categories($post_id);
-        if (!empty($categories)) {
-            $deal_categories = get_terms([
-                'taxonomy' => 'category',
-                'name__like' => 'deal',
-                'fields' => 'ids',
-                'hide_empty' => false
-            ]);
-            
-            if (!is_wp_error($deal_categories) && array_intersect($categories, $deal_categories)) {
-                return true;
-            }
-        }
-        
-        // Check for deal-related tags
-        $tags = wp_get_post_tags($post_id, ['fields' => 'names']);
-        $deal_keywords = ['deal', 'offer', 'discount', 'sale', 'promo', 'coupon', 'save'];
-        
-        foreach ($tags as $tag) {
-            foreach ($deal_keywords as $keyword) {
-                if (stripos($tag, $keyword) !== false) {
-                    return true;
-                }
-            }
-        }
-        
-        // Check post title for deal keywords
-        $title = get_the_title($post_id);
-        foreach ($deal_keywords as $keyword) {
-            if (stripos($title, $keyword) !== false) {
-                return true;
-            }
-        }
-        
-        // Allow manual override via post meta
-        $is_deal = get_post_meta($post_id, '_is_deal_post', true);
-        if ($is_deal === '1') {
-            return true;
-        }
-        
-        return false;
+
+        return true;
     }
     
     /**
@@ -170,10 +108,15 @@ class Engine {
             'stores' => []
         ];
         
-        // Extract discount percentage from title or content
-        $content = $post->post_title . ' ' . $post->post_content;
-        if (preg_match('/(\d+)\s*%/', $content, $matches)) {
-            $data['discount'] = intval($matches[1]);
+        // Extract discount from post meta first (preferred), fallback to title/content
+        $meta_discount = get_post_meta($post_id, '_discount_percentage', true);
+        if ($meta_discount !== '' && $meta_discount !== null) {
+            $data['discount'] = intval($meta_discount);
+        } else {
+            $content = $post->post_title . ' ' . $post->post_content;
+            if (preg_match('/(\d+)\s*%/', $content, $matches)) {
+                $data['discount'] = intval($matches[1]);
+            }
         }
         
         // Get product categories
@@ -228,35 +171,50 @@ class Engine {
         $error_message = '';
         
         // Send based on delivery method
-        switch ($notification->delivery_method) {
+                        switch ($notification->delivery_method) {
             case 'email':
                 $email_sender = new \DNE\Integrations\Email();
                 $result = $email_sender->send($user, $post);
                 $success = $result['success'];
                 $error_message = $result['message'] ?? '';
                 break;
-                
+
             case 'telegram':
                 $telegram = new \DNE\Integrations\Telegram();
                 $result = $telegram->send_notification($user->ID, $post);
                 $success = $result['success'];
                 $error_message = $result['message'] ?? '';
                 break;
-                
-            // case 'webpush':
-            //     $onesignal = new \DNE\Integrations\OneSignal();
-            //     $result = $onesignal->send_notification($user->ID, $post);
-            //     $success = $result['success'];
-            //     $error_message = $result['message'] ?? '';
-            //     break;
-                
+
+            case 'webpush':
+                // Optional skip of targeted webpush if broadcast is enabled elsewhere (off by default)
+                $skip_targeted = get_option('dne_skip_targeted_webpush_on_broadcast', '0') === '1';
+                if ($skip_targeted) {
+                    // Consider as handled to avoid retries; log as skipped
+                    $this->queue->mark_sent($notification->id);
+                    $this->queue->log_activity([
+                        'user_id' => $notification->user_id,
+                        'post_id' => $notification->post_id,
+                        'delivery_method' => 'webpush',
+                        'action' => 'webpush_skipped_broadcast',
+                        'status' => 'success',
+                        'details' => ['reason' => 'Skipped due to broadcast toggle']
+                    ]);
+                    $success = true;
+                    break;
+                }
+
+                $onesignal = new \DNE\Integrations\OneSignal();
+                $result = $onesignal->send_notification($user->ID, $post);
+                $success = $result['success'];
+                $error_message = $result['message'] ?? '';
+                break;
+
             default:
                 $success = false;
                 $error_message = 'Unknown delivery method: ' . $notification->delivery_method;
                 break;
-        }
-        
-        // Update notification status
+        }// Update notification status
         if ($success) {
             $this->queue->mark_sent($notification->id);
             

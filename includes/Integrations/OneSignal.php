@@ -13,7 +13,6 @@ class OneSignal
 
     private $app_id;
     private $api_key;
-    private $api_helper;
 
     /**
      * Constructor
@@ -36,9 +35,7 @@ class OneSignal
                 }
             }
         }
-        
-        // Initialize REST API helper
-        $this->api_helper = new OneSignal_API();
+        // Simple mode: no REST helper usage
     }
 
     /**
@@ -115,31 +112,42 @@ class OneSignal
         if (!empty($custom_target)) {
             // Custom target provided (for testing)
             $custom_target = trim($custom_target);
-            
+
+            // 1) UUID → treat as subscription id
             if (preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $custom_target)) {
-                // Looks like a subscription ID (UUID v4 format)
-                // First check if this might be the new v16 subscription ID format
                 $fields['include_subscription_ids'] = [$custom_target];
-                
+
                 if (get_option('dne_debug_mode') === '1') {
                     error_log('[DNE OneSignal] Using subscription ID targeting: ' . $custom_target);
                 }
+
+            // 2) ext:NN or external:NN → explicit external id
             } elseif (strpos($custom_target, 'ext:') === 0 || strpos($custom_target, 'external:') === 0) {
-                // Explicit external ID format
                 $external_id = preg_replace('/^(ext|external):/', '', $custom_target);
                 $fields['include_aliases'] = [
                     'external_id' => [(string) $external_id]
                 ];
-                
+
                 if (get_option('dne_debug_mode') === '1') {
                     error_log('[DNE OneSignal] Using explicit External ID targeting: ' . $external_id);
                 }
-            } else {
-                // Assume it's a subscription ID or player ID
-                $fields['include_subscription_ids'] = [$custom_target];
-                
+
+            // 3) All digits → treat as external id (friendlier tester)
+            } elseif (preg_match('/^\d+$/', $custom_target)) {
+                $fields['include_aliases'] = [
+                    'external_id' => [(string) $custom_target]
+                ];
+
                 if (get_option('dne_debug_mode') === '1') {
-                    error_log('[DNE OneSignal] Using direct ID targeting: ' . $custom_target);
+                    error_log('[DNE OneSignal] Using numeric External ID targeting: ' . $custom_target);
+                }
+
+            // 4) Fallback: assume it's a subscription id-like token
+            } else {
+                $fields['include_subscription_ids'] = [$custom_target];
+
+                if (get_option('dne_debug_mode') === '1') {
+                    error_log('[DNE OneSignal] Using direct ID targeting as subscription id: ' . $custom_target);
                 }
             }
         } else {
@@ -198,30 +206,30 @@ class OneSignal
             error_log('[DNE OneSignal] Response Body: ' . $body);
         }
 
-        // Check for success
+        // Check for success (v16: HTTP 200 + id present). Some v16 errors may still return 200 with an errors array.
         if ($code === 200 && isset($data['id'])) {
-            $recipients = isset($data['recipients']) ? intval($data['recipients']) : 0;
-            
-            if ($recipients > 0) {
-                return [
-                    'success' => true,
-                    'message' => sprintf('Push notification sent to %d recipient(s)', $recipients),
-                    'notification_id' => $data['id'],
-                    'recipients' => $recipients
-                ];
-            } else {
-                // Notification created but no recipients
-                // This might indicate the user needs to resubscribe
-                if (get_option('dne_debug_mode') === '1') {
-                    error_log('[DNE OneSignal] Notification created but 0 recipients - user may need to resubscribe');
-                }
-                
+            // If the API returned errors alongside id, treat as error
+            if (!empty($data['errors'])) {
+                $errors = is_array($data['errors']) ? implode(', ', $data['errors']) : (string) $data['errors'];
                 return [
                     'success' => false,
-                    'message' => 'No active subscriptions found for this user. User may need to resubscribe.',
+                    'message' => 'OneSignal API error: ' . $errors . ' (HTTP ' . $code . ')',
                     'notification_id' => $data['id']
                 ];
             }
+
+            // recipients is often omitted in v16; treat creation as success
+            $recipients = isset($data['recipients']) ? intval($data['recipients']) : null;
+            $msg = $recipients !== null
+                ? sprintf('Push notification created and queued for %d recipient(s)', $recipients)
+                : 'Push notification created (v16)';
+
+            return [
+                'success' => true,
+                'message' => $msg,
+                'notification_id' => $data['id'],
+                'recipients' => $recipients,
+            ];
         }
 
         // Handle errors
@@ -314,44 +322,8 @@ class OneSignal
      */
     public function prepare_user_for_notification($user_id)
     {
-        if (!$this->api_helper->is_configured()) {
-            return false;
-        }
-        
-        // Get user's subscriptions
-        $subscriptions = $this->api_helper->get_subscriptions_by_external_id($user_id);
-        
-        if (empty($subscriptions)) {
-            if (get_option('dne_debug_mode') === '1') {
-                error_log('[DNE OneSignal] No subscriptions found for user ' . $user_id);
-            }
-            return false;
-        }
-        
-        // Check if user has any active subscriptions
-        $has_active = false;
-        foreach ($subscriptions as $subscription) {
-            if (isset($subscription['notification_types']) && $subscription['notification_types'] > 0) {
-                $has_active = true;
-                break;
-            }
-        }
-        
-        if (!$has_active) {
-            if (get_option('dne_debug_mode') === '1') {
-                error_log('[DNE OneSignal] User ' . $user_id . ' has no active subscriptions');
-            }
-            
-            // Cleanup disabled subscriptions
-            $cleanup_result = $this->api_helper->cleanup_disabled_subscriptions($user_id);
-            
-            if (get_option('dne_debug_mode') === '1') {
-                error_log('[DNE OneSignal] Cleaned up ' . $cleanup_result['deleted'] . ' disabled subscriptions');
-            }
-            
-            return false;
-        }
-        
+        // Simple mode: do not query/modify subscriptions server-side.
+        // Frontend manages identity and opt-in state. Always return true.
         return true;
     }
 }

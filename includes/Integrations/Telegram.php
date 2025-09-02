@@ -164,7 +164,7 @@ class Telegram
         $this->send_message(
             $verification->chat_id,
             "✅ Your account has been successfully connected!\n\n" .
-                "You will now receive deal notifications here."
+                "You will now receive personilized deal notifications here."
         );
 
         return [

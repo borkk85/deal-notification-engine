@@ -148,25 +148,21 @@ jQuery(document).ready(function($) {
                     
                     if (isDebug) console.log('[DNE] Starting OneSignal subscription process...');
                     
-                    // Step 1: Cleanup any disabled subscriptions first
-                    if (isDebug) console.log('[DNE] Cleaning up disabled subscriptions...');
+                    // Step 1: (Simple mode) Do not cleanup via server; proceed directly
+                    if (isDebug) console.log('[DNE] Simple mode: skipping server-side cleanup');
                     
-                    const cleanupResponse = await $.post(dne_ajax.ajax_url, {
-                        action: 'dne_onesignal_prepare_subscription',
-                        user_id: userId,
-                        nonce: dne_ajax.nonce
-                    }).promise();
-                    
-                    if (cleanupResponse.success && isDebug) {
-                        console.log('[DNE] Cleanup complete:', cleanupResponse.data);
-                    }
-                    
-                    // Step 2: Clear any existing External ID
+                    // Step 2: Identity sanity check (avoid unnecessary logout)
+                    let currentExternalId = null;
                     try {
-                        await OneSignal.logout();
-                        if (isDebug) console.log('[DNE] Cleared existing External ID');
-                    } catch (e) {
-                        // Ignore logout errors
+                        currentExternalId = await OneSignal.User.externalId;
+                    } catch (e) {}
+                    if (isDebug) console.log('[DNE] Current External ID:', currentExternalId);
+                    if (currentExternalId && String(currentExternalId) !== String(userId)) {
+                        try {
+                            if (isDebug) console.log('[DNE] External ID mismatch; logging out to switch identity');
+                            await OneSignal.logout();
+                            if (isDebug) console.log('[DNE] Cleared previous External ID');
+                        } catch (e) {}
                     }
                     
                     // Step 3: Check browser permission
@@ -254,8 +250,13 @@ jQuery(document).ready(function($) {
                     if (isDebug) console.log('[DNE] Subscription ID:', subscriptionId);
                     
                     // Step 7: Set External ID (critical for targeting)
-                    await OneSignal.login(String(userId));
-                    if (isDebug) console.log('[DNE] External ID set to:', userId);
+                    currentExternalId = await OneSignal.User.externalId;
+                    if (String(currentExternalId) !== String(userId)) {
+                        await OneSignal.login(String(userId));
+                        if (isDebug) console.log('[DNE] External ID set to:', userId);
+                    } else if (isDebug) {
+                        console.log('[DNE] External ID already correct; skipping login');
+                    }
                     
                     // Step 8: Set tags for additional targeting
                     await OneSignal.User.addTags({
@@ -431,13 +432,17 @@ jQuery(document).ready(function($) {
         webPushLabel.append(indicator);
     }
     
+    // Use enhanced web push status UI if available
+    if (typeof window.dneEnhancedUpdatePushStatusIndicator === 'function') {
+        updatePushStatusIndicator = window.dneEnhancedUpdatePushStatusIndicator;
+    }
     // Initialize OneSignal status check on page load
     if (typeof dne_ajax !== 'undefined' && dne_ajax.user_id && dne_ajax.user_id !== '0') {
         // Check if user has webpush in their saved preferences
         var hasWebPush = previousDeliveryMethods.includes('webpush') || $('#delivery_webpush').is(':checked');
+        // Always check actual subscription state regardless of saved preference
+        var hasWebPush = true;
         
-        if (hasWebPush) {
-            checkOneSignalStatus();
         } else {
             updatePushStatusIndicator(false);
         }
@@ -576,3 +581,50 @@ jQuery(document).ready(function($) {
     `;
     document.head.appendChild(style);
 })();
+
+// --- Enhanced Web Push status UI (appended override) ---
+(function($){
+    // Redefine updatePushStatusIndicator with richer UI and add Disconnect button
+    function dneEnhancedUpdatePushStatusIndicator(isSubscribed) {
+        // Prefer robust selector by value/name; fallback to legacy id
+        var $input = $('input[name="notification_delivery_methods[]"][value="webpush"]');
+        if ($input.length === 0) { $input = $('#delivery_webpush'); }
+        if ($input.length === 0) return; // nothing to render under
+
+        var webPushRow = $input.closest('label').parent();
+        if (webPushRow.length === 0) { webPushRow = $input.parent().parent(); }
+
+        var $status = webPushRow.find('.dne-webpush-status');
+        if ($status.length === 0) {
+            $status = $('<div class="dne-webpush-status" style="margin-top:6px;"></div>');
+            webPushRow.append($status);
+        }
+
+        if (isSubscribed) {
+            $status.html('<span style="color:#1a7f37;">\u2713 Browser push connected</span> <button type="button" class="button-link dne-webpush-disconnect" style="color:#d63638;margin-left:8px;">Disconnect</button>');
+        } else {
+            $status.html('<span style="color:#8a6d3b;">Browser push is off. Check to subscribe.</span>');
+        }
+    }
+    // Expose as the active function
+    window.updatePushStatusIndicator = dneEnhancedUpdatePushStatusIndicator;
+
+    // Inline Disconnect handler for web push
+    $(document).on('click', '.dne-webpush-disconnect', async function(e) {
+        e.preventDefault();
+        var $btn = $(this);
+        $btn.prop('disabled', true).text('Disconnecting...');
+        try {
+            await handleOneSignalUnsubscription();
+            $('#delivery_webpush').prop('checked', false);
+            window.updatePushStatusIndicator(false);
+            showNotice('info', 'Browser push disconnected.');
+        } catch (err) {
+            console.error('[DNE] Error disconnecting web push:', err);
+            showNotice('error', 'Failed to disconnect browser push.');
+        } finally {
+            $btn.prop('disabled', false).text('Disconnect');
+        }
+    });
+})(jQuery);
+// --- End enhanced Web Push status UI ---

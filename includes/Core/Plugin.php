@@ -17,7 +17,7 @@ class Plugin
     private $notification_engine;
     private $telegram_integration;
     private $settings;
-    private $metabox;
+    // private  $metabox; // disabled (metabox slated for removal) 
 
     /**
      * Get singleton instance
@@ -72,8 +72,8 @@ class Plugin
         // Initialize Telegram integration
         $this->telegram_integration = new \DNE\Integrations\Telegram();
 
-        // Initialize Metabox
-        $this->metabox = new \DNE\Admin\Metabox();
+        // Initialize Metabox (disabled)
+        //  $this->metabox = new  \\\\DNE\\\\Admin\\\\Metabox();
     }
 
     /**
@@ -93,8 +93,8 @@ class Plugin
         // Initialize Telegram
         $this->telegram_integration->init();
 
-        // Initialize Metabox
-        $this->metabox->init();
+        // Initialize Metabox (disabled)
+        //  $this->metabox->init(); 
     }
 
     /**
