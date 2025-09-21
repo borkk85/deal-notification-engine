@@ -1,45 +1,60 @@
 <?php
+
 namespace DNE\Integrations;
 
 /**
  * Email notification handler
  */
-class Email {
-    
+class Email
+{
+
     /**
      * Send email notification
      */
     /**
      * Send email notification
      */
-    public function send($user, $post) {
+    public function send($user, $post)
+    {
+        // Gate by user preferences/tier before doing work
+        $filter = new \DNE\Notifications\Filter();
+        $user_id = is_object($user) && isset($user->ID) ? (int) $user->ID : (int) $user;
+        if (!$filter->user_allows_channel($user_id, 'email')) {
+            dne_debug("DENY email for user {$user_id} (preferences/tier)");
+            return [
+                'success' => false,
+                'message' => 'User has email disabled or not allowed by tier'
+            ];
+        }
+        dne_debug("ALLOW email for user {$user_id}");
+
         // Get email settings
         $from_name = get_option('dne_email_from_name', get_bloginfo('name'));
         $from_email = get_option('dne_email_from_address', get_option('admin_email'));
         $subject_template = get_option('dne_email_subject_template', 'New Deal Alert: {title}');
-        
+
         // Prepare email data
         $to = $user->user_email;
         $subject = str_replace('{title}', get_the_title($post), $subject_template);
-        
+
         if (get_option('dne_debug_mode') === '1') {
             error_log('[DNE Email] Sending to: ' . $to);
             error_log('[DNE Email] Subject: ' . $subject);
             error_log('[DNE Email] From: ' . $from_name . ' <' . $from_email . '>');
         }
-        
+
         // Build email content
         $message = $this->build_email_content($user, $post);
-        
+
         // Set headers
         $headers = [
             'Content-Type: text/html; charset=UTF-8',
             "From: $from_name <$from_email>"
         ];
-        
+
         // Send email
         $sent = wp_mail($to, $subject, $message, $headers);
-        
+
         if (get_option('dne_debug_mode') === '1') {
             error_log('[DNE Email] Send result: ' . ($sent ? 'SUCCESS' : 'FAILED'));
             if (!$sent) {
@@ -48,28 +63,29 @@ class Email {
                 error_log('[DNE Email] WordPress SMTP configured: ' . (defined('SMTP_HOST') ? 'yes' : 'no'));
             }
         }
-        
+
         return [
             'success' => $sent,
             'message' => $sent ? 'Email sent successfully' : 'Failed to send email (check SMTP configuration)'
         ];
     }
-    
+
     /**
      * Build HTML email content
      */
-    private function build_email_content($user, $post) {
+    private function build_email_content($user, $post)
+    {
         $title = get_the_title($post);
         $url = get_permalink($post);
         $excerpt = wp_trim_words($post->post_content, 100);
         $featured_image = get_the_post_thumbnail_url($post, 'large');
-        
+
         // Extract discount if available
         $discount_text = '';
         if (preg_match('/(\d+)\s*%/', $title . ' ' . $post->post_content, $matches)) {
             $discount_text = "<div style='background: #ff6b6b; color: white; padding: 10px; text-align: center; font-size: 24px; font-weight: bold; margin-bottom: 20px;'>{$matches[1]}% OFF</div>";
         }
-        
+
         $html = '<!DOCTYPE html>
 <html>
 <head>
@@ -90,11 +106,11 @@ class Email {
             ' . $discount_text . '
             
             <h2 style="color: #333; margin-bottom: 20px;">' . esc_html($title) . '</h2>';
-        
+
         if ($featured_image) {
             $html .= '<img src="' . esc_url($featured_image) . '" alt="' . esc_attr($title) . '" style="width: 100%; height: auto; margin-bottom: 20px; border-radius: 4px;">';
         }
-        
+
         $html .= '
             <div style="color: #666; line-height: 1.6; margin-bottom: 30px;">
                 ' . wp_kses_post($excerpt) . '
@@ -117,7 +133,7 @@ class Email {
     </div>
 </body>
 </html>';
-        
+
         return $html;
     }
 }

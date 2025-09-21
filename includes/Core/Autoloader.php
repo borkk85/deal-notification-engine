@@ -34,21 +34,28 @@ class Autoloader {
      * Autoload classes
      */
     public function autoload($class) {
-        // Check if class uses our namespace
-        $len = strlen($this->namespace);
-        if (strncmp($this->namespace, $class, $len) !== 0) {
+        // Normalize leading backslash and ensure namespace matches
+        $class = ltrim($class, '\\');
+        $ns    = $this->namespace;
+        $nsLen = strlen($ns);
+        if (strncmp($ns, $class, $nsLen) !== 0) {
             return;
         }
-        
-        // Get relative class name
-        $relative_class = substr($class, $len);
-        
-        // Replace namespace separator with directory separator
-        $file = $this->base_dir . str_replace('\\', '/', $relative_class) . '.php';
-        
+
+        // Get relative class name within our namespace
+        $relative = substr($class, $nsLen); // e.g. "\\Notifications\\Engine"
+        $relative = ltrim($relative, '\\'); // "Notifications\\Engine"
+
+        if ($relative === '') {
+            return; // nothing to load at the namespace root
+        }
+
+        // Build file path
+        $path = $this->base_dir . str_replace('\\', '/', $relative) . '.php';
+
         // Load file if exists
-        if (file_exists($file)) {
-            require $file;
+        if (file_exists($path)) {
+            require $path;
         }
     }
 }

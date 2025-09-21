@@ -102,8 +102,10 @@ class Plugin
      */
     private function register_hooks()
     {
-        // Hook into post publication for deal notifications
-        add_action('publish_post', [$this->notification_engine, 'handle_new_deal'], 10, 2);
+        // Hook into post status transitions for deal notifications.
+        // Use higher priority so other plugins can set meta/taxonomies first.
+        // This only triggers on actual new publications, not edits or timestamp changes
+        add_action('transition_post_status', [$this->notification_engine, 'handle_post_transition'], 120, 3);
 
         // Add admin menu
         add_action('admin_menu', [$this, 'add_admin_menu']);
@@ -146,6 +148,12 @@ class Plugin
     public function render_admin_page()
     {
 ?>
+        <style>
+            .card-custom {
+                width: 100% !important;
+                max-width: none !important;
+            }
+        </style>
         <div class="wrap">
             <h1><?php echo esc_html__('Deal Notification Engine', 'deal-notification-engine'); ?></h1>
 
@@ -153,7 +161,126 @@ class Plugin
                 <p><?php echo esc_html__('Notification system is active. Configure settings below.', 'deal-notification-engine'); ?></p>
             </div>
 
-            <div class="card">
+            <div class="card-custom card">
+                <h2><?php echo esc_html__('User Gating Overview', 'deal-notification-engine'); ?></h2>
+                <p><?php echo esc_html__('Snapshot of active users and their effective notification gating.', 'deal-notification-engine'); ?></p>
+                <?php
+                // Fetch users with notifications enabled
+                $users = get_users([
+                    'meta_key'   => 'notifications_enabled',
+                    'meta_value' => '1',
+                    'fields'     => 'all',
+                    'number'     => 200, // soft cap for performance
+                ]);
+
+                if (!empty($users)) {
+                    echo '<table class="wp-list-table widefat fixed striped">';
+                    echo '<thead><tr>
+                            <th>' . esc_html__('User', 'deal-notification-engine') . '</th>
+                            <th>' . esc_html__('Tier', 'deal-notification-engine') . '</th>
+                            <th>' . esc_html__('Saved Methods', 'deal-notification-engine') . '</th>
+                            <th>' . esc_html__('Allowed by Tier', 'deal-notification-engine') . '</th>
+                            <th>' . esc_html__('Effective', 'deal-notification-engine') . '</th>
+                            <th>' . esc_html__('Min %', 'deal-notification-engine') . '</th>
+                            <th>' . esc_html__('Categories', 'deal-notification-engine') . '</th>
+                            <th>' . esc_html__('Stores', 'deal-notification-engine') . '</th>
+                        </tr></thead><tbody>';
+
+                    foreach ($users as $u) {
+                        $saved_methods = get_user_meta($u->ID, 'notification_delivery_methods', true);
+                        if (!is_array($saved_methods)) $saved_methods = [];
+
+                        // Derive tier from role naming convention
+                        $tier = 0;
+                        if (is_array($u->roles)) {
+                            foreach ($u->roles as $r) {
+                                if (strpos($r, 'um_deal') !== false && strpos($r, 'tier') !== false) {
+                                    if (strpos($r, 'tier-3') !== false || strpos($r, 'tier_3') !== false) {
+                                        $tier = 3;
+                                        break;
+                                    }
+                                    if (strpos($r, 'tier-2') !== false || strpos($r, 'tier_2') !== false) {
+                                        $tier = 2;
+                                        break;
+                                    }
+                                    if (strpos($r, 'tier-1') !== false || strpos($r, 'tier_1') !== false) {
+                                        $tier = 1;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        if ($tier === 0) {
+                            $tier = 1;
+                        } // default safest tier
+
+                        // Allowed by tier mapping (server authority)
+                        $allowed_by_tier_map = [
+                            1 => ['email'],
+                            2 => ['email', 'telegram'],
+                            3 => ['email', 'telegram', 'webpush'],
+                        ];
+                        $allowed_by_tier = $allowed_by_tier_map[$tier];
+
+                        // Effective = intersection of saved and allowed-by-tier
+                        $effective = array_values(array_intersect($saved_methods, $allowed_by_tier));
+
+                        // Filters
+                        $min_pct = (int) get_user_meta($u->ID, 'user_discount_filter', true);
+                        $cat_ids = get_user_meta($u->ID, 'user_category_filter', true);
+                        $store_ids = get_user_meta($u->ID, 'user_store_filter', true);
+                        if (!is_array($cat_ids)) $cat_ids = [];
+                        if (!is_array($store_ids)) $store_ids = [];
+
+                        // Resolve term names
+                        $cat_names = [];
+                        if (!empty($cat_ids)) {
+                            $terms = get_terms([
+                                'taxonomy' => 'product_categories',
+                                'include'  => array_map('intval', $cat_ids),
+                                'hide_empty' => false,
+                            ]);
+                            if (!is_wp_error($terms)) {
+                                foreach ($terms as $t) {
+                                    $cat_names[] = $t->name;
+                                }
+                            }
+                        }
+
+                        $store_names = [];
+                        if (!empty($store_ids)) {
+                            $terms = get_terms([
+                                'taxonomy' => 'store_type',
+                                'include'  => array_map('intval', $store_ids),
+                                'hide_empty' => false,
+                            ]);
+                            if (!is_wp_error($terms)) {
+                                foreach ($terms as $t) {
+                                    $store_names[] = $t->name;
+                                }
+                            }
+                        }
+
+                        echo '<tr>';
+                        echo '<td>' . esc_html($u->display_name) . ' (#' . intval($u->ID) . ')</td>';
+                        echo '<td>' . esc_html($tier) . '</td>';
+                        echo '<td>' . esc_html(implode(', ', $saved_methods)) . '</td>';
+                        echo '<td>' . esc_html(implode(', ', $allowed_by_tier)) . '</td>';
+                        echo '<td>' . esc_html(implode(', ', $effective)) . '</td>';
+                        echo '<td>' . ($min_pct ? esc_html($min_pct) : '&ndash;') . '</td>';
+                        echo '<td>' . (!empty($cat_names) ? esc_html(implode(', ', $cat_names)) : '&ndash;') . '</td>';
+                        echo '<td>' . (!empty($store_names) ? esc_html(implode(', ', $store_names)) : '&ndash;') . '</td>';
+                        echo '</tr>';
+                    }
+
+                    echo '</tbody></table>';
+                } else {
+                    echo '<p>' . esc_html__('No users with notifications enabled.', 'deal-notification-engine') . '</p>';
+                }
+                ?>
+            </div>
+
+            <div class="card-custom card">
                 <h2><?php echo esc_html__('Statistics', 'deal-notification-engine'); ?></h2>
                 <?php
                 global $wpdb;
@@ -174,7 +301,7 @@ class Plugin
                 ?>
             </div>
 
-            <div class="card">
+            <div class="card-custom card">
                 <h2><?php echo esc_html__('Test Notification', 'deal-notification-engine'); ?></h2>
                 <p><?php echo esc_html__('Send a test notification to verify everything is working.', 'deal-notification-engine'); ?></p>
 
@@ -234,7 +361,7 @@ class Plugin
                 </p>
             </div>
 
-            <div class="card">
+            <div class="card-custom card">
                 <h2><?php echo esc_html__('Quick Actions', 'deal-notification-engine'); ?></h2>
                 <p>
                     <a href="<?php echo admin_url('admin.php?page=deal-notifications-settings'); ?>" class="button button-primary">
@@ -246,10 +373,19 @@ class Plugin
                     <button type="button" class="button button-secondary" onclick="if(confirm('Process all pending notifications now?')) { jQuery.post(ajaxurl, {action: 'dne_process_queue_manually'}, function(r) { alert(r.data || 'Processing started'); location.reload(); }); }">
                         <?php echo esc_html__('Process Queue Now', 'deal-notification-engine'); ?>
                     </button>
+                    <button type="button" class="button button-secondary" onclick="if(confirm('Reset failed notifications for retry? This will reset attempt counts.')) { jQuery.post(ajaxurl, {action: 'dne_reset_failed_notifications'}, function(r) { alert(r.data || 'Reset completed'); location.reload(); }); }">
+                        <?php echo esc_html__('Reset Failed Notifications', 'deal-notification-engine'); ?>
+                    </button>
+                    <button type="button" class="button button-secondary" onclick="jQuery.post(ajaxurl, {action: 'dne_debug_settings'}, function(r) { alert('Debug Info:\\n' + JSON.stringify(r.data, null, 2)); });">
+                        <?php echo esc_html__('Debug Settings', 'deal-notification-engine'); ?>
+                    </button>
+                    <button type="button" class="button button-secondary" style="background: #dc3545; border-color: #dc3545; color: white;" onclick="if(confirm('DANGER: This will permanently delete ALL notifications from the queue. Are you sure?')) { jQuery.post(ajaxurl, {action: 'dne_clear_all_notifications'}, function(r) { alert(r.data || 'Cleared'); location.reload(); }); }">
+                        <?php echo esc_html__('Clear All Queue', 'deal-notification-engine'); ?>
+                    </button>
                 </p>
             </div>
 
-            <div class="card">
+            <div class="card-custom card">
                 <h2><?php echo esc_html__('Recent Notification Log', 'deal-notification-engine'); ?></h2>
                 <?php
                 if ($wpdb->get_var("SHOW TABLES LIKE '$table_log'") === $table_log) {
@@ -264,6 +400,7 @@ class Plugin
                             <th>Post</th>
                             <th>Method</th>
                             <th>Status</th>
+                            <th>Details</th>
                             <th>Time</th>
                         </tr></thead><tbody>';
 
@@ -275,6 +412,29 @@ class Plugin
                             echo '<td>' . ($post ? esc_html($post->post_title) : 'Post #' . $log->post_id) . '</td>';
                             echo '<td>' . esc_html($log->delivery_method ?? $log->action) . '</td>';
                             echo '<td>' . esc_html($log->status) . '</td>';
+                            // Decode details JSON if present and show core error text
+                            $detailText = '';
+                            if (!empty($log->details)) {
+                                $decoded = json_decode($log->details, true);
+                                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                                    if (isset($decoded['error'])) {
+                                        $detailText = (string) $decoded['error'];
+                                    } else {
+                                        // Fallback: compact JSON
+                                        $compact = wp_json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                                        $detailText = (string) $compact;
+                                    }
+                                } else {
+                                    $detailText = (string) $log->details; // raw string
+                                }
+                            }
+                            if ($detailText !== '') {
+                                // Truncate long text for table view
+                                if (mb_strlen($detailText) > 160) {
+                                    $detailText = mb_substr($detailText, 0, 157) . '...';
+                                }
+                            }
+                            echo '<td>' . esc_html($detailText) . '</td>';
                             echo '<td>' . esc_html($log->created_at) . '</td>';
                             echo '</tr>';
                         }
@@ -301,7 +461,7 @@ class Plugin
         if (!is_user_logged_in()) {
             return;
         }
-        
+
         // Check if we're on a page that might have notification preferences
         // You may need to adjust this condition based on your theme
         $is_profile_page = is_page() && (
@@ -311,10 +471,10 @@ class Plugin
             strpos(get_page_template_slug(), 'profile') !== false ||
             strpos(get_page_template_slug(), 'account') !== false
         );
-        
+
         // Also load on Ultimate Member profile pages
         $is_um_profile = function_exists('um_is_core_page');
-        
+
         if ($is_profile_page || $is_um_profile || is_page() || is_single()) {
             // Enqueue the script with updated version
             wp_enqueue_script(
@@ -333,7 +493,7 @@ class Plugin
                 'user_id' => $user_id,
                 'debug_mode' => get_option('dne_debug_mode', '0')
             ];
-            
+
             // Add user role info for debugging
             if ($user_id) {
                 $user = wp_get_current_user();
@@ -345,14 +505,14 @@ class Plugin
                     }
                 }
                 $localize_data['has_deal_role'] = $has_deal_role ? '1' : '0';
-                
+
                 // Check if user has webpush enabled to prevent unnecessary OneSignal initialization
                 $delivery_methods = get_user_meta($user_id, 'notification_delivery_methods', true);
                 $localize_data['has_webpush'] = (is_array($delivery_methods) && in_array('webpush', $delivery_methods)) ? '1' : '0';
             }
 
             wp_localize_script('dne-frontend', 'dne_ajax', $localize_data);
-            
+
             // Only check OneSignal if it's enabled AND user might use it
             if (get_option('dne_onesignal_enabled') === '1' && !empty($localize_data['has_webpush'])) {
                 wp_add_inline_script('dne-frontend', '

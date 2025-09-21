@@ -132,11 +132,21 @@ class Filter
      */
     private function matches_category_filter($filter_categories, $deal_categories)
     {
-        if (empty($filter_categories) || !is_array($filter_categories)) {
-            return true; // No filter set
+        // Normalize inputs
+        $filter_categories = is_array($filter_categories) ? $filter_categories : [];
+        $deal_categories   = is_array($deal_categories) ? $deal_categories : [];
+
+        // If user did not set any category filter, do not block
+        if (empty($filter_categories)) {
+            return true;
         }
 
-        // User must match at least one category
+        // Strict mode: if user filtered by categories but the deal has none, do not match
+        if (empty($deal_categories)) {
+            return false;
+        }
+
+        // Otherwise, require at least one overlap
         return !empty(array_intersect($filter_categories, $deal_categories));
     }
 
@@ -256,13 +266,40 @@ class Filter
      */
     public function get_user_delivery_methods($user_id)
     {
+        // Read meta and normalize to array
         $methods = get_user_meta($user_id, 'notification_delivery_methods', true);
-
-        // Default to email if no methods set
-        if (empty($methods) || !is_array($methods)) {
-            return ['email'];
+        if (!is_array($methods)) {
+            $methods = [];
         }
 
+        // Allow only known channels
+        $methods = array_values(array_intersect(['email', 'webpush', 'telegram'], $methods));
+
+        // Drop Telegram if not verified / no chat id
+        if (in_array('telegram', $methods, true)) {
+            $verified = get_user_meta($user_id, 'telegram_verified', true) === '1';
+            $chat_id  = get_user_meta($user_id, 'telegram_chat_id', true);
+            if (!$verified || empty($chat_id)) {
+                $methods = array_values(array_diff($methods, ['telegram']));
+            }
+        }
+
+        if (!in_array('telegram', $methods, true)) {
+            dne_debug("methods for user {$user_id}: " . json_encode($methods)); // shows dropped telegram too
+        }
+
+        // IMPORTANT: do NOT default to ['email'] when empty.
         return $methods;
+    }
+
+    public function user_allows_channel($user_id, string $channel): bool
+    {
+        if (get_user_meta($user_id, 'notifications_enabled', true) !== '1') {
+            return false;
+        }
+        $methods = $this->get_user_delivery_methods($user_id);
+        dne_debug("gating {$channel} for user {$user_id}: enabled=".(get_user_meta($user_id,'notifications_enabled',true)==='1'?'1':'0').", methods=".json_encode($this->get_user_delivery_methods($user_id)));
+
+        return in_array($channel, $methods, true);
     }
 }

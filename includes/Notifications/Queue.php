@@ -41,11 +41,16 @@ class Queue {
         foreach ($user_ids as $user_id) {
             // Get user's delivery methods
             $delivery_methods = $filter->get_user_delivery_methods($user_id);
+            dne_debug("User {$user_id} delivery methods: " . wp_json_encode($delivery_methods));
             
             // Queue notification for each delivery method
             foreach ($delivery_methods as $method) {
+                dne_debug("Queuing {$method} notification for user {$user_id}");
                 if ($this->add_notification($user_id, $post_id, $method)) {
                     $queued++;
+                    dne_debug("Successfully queued {$method} for user {$user_id}");
+                } else {
+                    dne_debug("Failed to queue {$method} for user {$user_id} (duplicate?)");
                 }
             }
         }
@@ -123,15 +128,40 @@ class Queue {
             $batch_size = get_option('dne_batch_size', 50);
         }
         
-        return $wpdb->get_results($wpdb->prepare(
+        // Debug: Check total queue contents first
+        $total_count = $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_queue}");
+        dne_debug("Total notifications in queue: {$total_count}");
+        
+        // Debug: Check by status
+        $pending_count = $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_queue} WHERE status = 'pending'");
+        $high_attempts = $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_queue} WHERE status = 'pending' AND attempts >= 3");
+        $future_scheduled = $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_queue} WHERE status = 'pending' AND scheduled_at > NOW()");
+        
+        dne_debug("Pending notifications: {$pending_count}");
+        dne_debug("High attempts (>=3): {$high_attempts}");
+        dne_debug("Future scheduled: {$future_scheduled}");
+        
+        // Align selection to support both legacy (local time) and new (UTC) scheduled_at values
+        $now_utc   = current_time('mysql', true);
+        $now_local = current_time('mysql');
+        $query = $wpdb->prepare(
             "SELECT * FROM {$this->table_queue}
              WHERE status = 'pending' 
              AND attempts < 3 
-             AND scheduled_at <= NOW() 
+             AND (scheduled_at <= %s OR scheduled_at <= %s)
              ORDER BY scheduled_at ASC 
              LIMIT %d",
+            $now_utc,
+            $now_local,
             $batch_size
-        ));
+        );
+        
+        dne_debug("Query: " . $query);
+        
+        $results = $wpdb->get_results($query);
+        dne_debug("Query returned " . count($results) . " results");
+        
+        return $results;
     }
     
     /**
@@ -326,5 +356,52 @@ class Queue {
         return $wpdb->query(
             "DELETE FROM {$this->table_queue} WHERE status = 'pending'"
         );
+    }
+    
+    /**
+     * Reset failed notifications for retry
+     * Admin function for testing - resets attempt count
+     * 
+     * @return int Number reset
+     */
+    public function reset_failed_notifications() {
+        global $wpdb;
+        
+        $count = $wpdb->query(
+            "UPDATE {$this->table_queue} 
+             SET attempts = 0, error_message = '' 
+             WHERE status = 'pending' AND attempts >= 3"
+        );
+        
+        dne_debug("Reset {$count} failed notifications for retry");
+        return $count;
+    }
+    
+    /**
+     * Clear all notifications from queue
+     * Admin function for maintenance
+     * 
+     * @return array Counts of cleared notifications
+     */
+    public function clear_all_notifications() {
+        global $wpdb;
+        
+        // Count by status before clearing
+        $stats = [
+            'pending' => $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_queue} WHERE status = 'pending'"),
+            'sent' => $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_queue} WHERE status = 'sent'"),
+            'failed' => $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_queue} WHERE status = 'failed'"),
+            'total' => $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_queue}")
+        ];
+        
+        // Clear all notifications
+        $deleted = $wpdb->query("DELETE FROM {$this->table_queue}");
+        
+        dne_debug("Cleared {$deleted} total notifications from queue");
+        
+        return [
+            'deleted' => $deleted,
+            'stats' => $stats
+        ];
     }
 }

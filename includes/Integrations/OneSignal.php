@@ -49,8 +49,11 @@ class OneSignal
      */
     public function send_notification($user_id, $post, $custom_target = null)
     {
+        dne_debug("OneSignal send_notification called for user {$user_id}");
+        
         // Check configuration
         if (empty($this->app_id) || empty($this->api_key)) {
+            dne_debug("OneSignal not configured - app_id: " . (empty($this->app_id) ? 'empty' : 'set') . ", api_key: " . (empty($this->api_key) ? 'empty' : 'set'));
             return [
                 'success' => false,
                 'message' => 'OneSignal not configured'

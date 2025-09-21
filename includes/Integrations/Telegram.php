@@ -178,6 +178,22 @@ class Telegram
      */
     public function send_notification($user_id, $post)
     {
+        dne_debug("Telegram send_notification called for user {$user_id}");
+        
+        // Gate by user preferences/tier first
+        $filter = new \DNE\Notifications\Filter();
+        $allowed = $filter->user_allows_channel((int)$user_id, 'telegram');
+        dne_debug("Telegram user_allows_channel result for user {$user_id}: " . ($allowed ? 'true' : 'false'));
+        
+        if (!$allowed) {
+            dne_debug("DENY telegram for user {$user_id} (preferences/tier)");
+            return [
+                'success' => false,
+                'message' => 'User has Telegram disabled or not allowed by tier'
+            ];
+        }
+        dne_debug("ALLOW telegram for user {$user_id}");
+
         // Check if Telegram is enabled
         if (get_option('dne_telegram_enabled') !== '1' || empty($this->bot_token)) {
             if (get_option('dne_debug_mode') === '1') {
@@ -222,11 +238,21 @@ class Telegram
             "$excerpt\n\n" .
             "👉 <a href=\"$url\">View Deal</a>";
 
-        // Send message
+
+        // Send message with detailed error handling
         $result = $this->send_message($chat_id, $message);
 
+        if (is_array($result)) {
+            return [
+                'success' => (bool) ($result['success'] ?? false),
+                'message' => ($result['success'] ?? false)
+                    ? 'Sent successfully'
+                    : ('Failed to send' . (!empty($result['description']) ? ': ' . $result['description'] : ''))
+            ];
+        }
+
         return [
-            'success' => $result,
+            'success' => (bool) $result,
             'message' => $result ? 'Sent successfully' : 'Failed to send'
         ];
     }
@@ -237,7 +263,7 @@ class Telegram
     private function send_message($chat_id, $text)
     {
         if (empty($this->bot_token)) {
-            return false;
+            return ['success' => false, 'description' => 'Bot token is not configured'];
         }
 
         $url = "https://api.telegram.org/bot{$this->bot_token}/sendMessage";
@@ -253,12 +279,24 @@ class Telegram
         ]);
 
         if (is_wp_error($response)) {
-            error_log('Telegram API error: ' . $response->get_error_message());
-            return false;
+            $err = $response->get_error_message();
+            error_log('Telegram API error: ' . $err);
+            return ['success' => false, 'description' => $err];
         }
 
-        $body = json_decode(wp_remote_retrieve_body($response), true);
-        return isset($body['ok']) && $body['ok'] === true;
+        $body_raw = wp_remote_retrieve_body($response);
+        $body = json_decode($body_raw, true);
+        if (isset($body['ok']) && $body['ok'] === true) {
+            return ['success' => true];
+        }
+        // Use Telegram API description if available
+        $desc = '';
+        if (is_array($body) && isset($body['description'])) {
+            $desc = (string) $body['description'];
+        } elseif (is_string($body_raw) && $body_raw !== '') {
+            $desc = $body_raw;
+        }
+        return ['success' => false, 'description' => $desc];
     }
 
     /**

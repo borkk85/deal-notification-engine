@@ -6,6 +6,17 @@
 jQuery(document).ready(function ($) {
   // Track previous delivery methods to detect changes
   var previousDeliveryMethods = [];
+  var DNE_ENFORCING = false;
+
+  jQuery(function ($) {
+    var tier = parseInt(
+      $(".deal-notification-fields").data("tier-level") || "3",
+      10
+    );
+    // Tier 1: email only; Tier 2: email + telegram; Tier 3: all
+    if (tier < 3) $(".dne-channel--telegram").hide();
+    if (tier < 2) $(".dne-channel--webpush").hide();
+  });
 
   // Store initial state on page load
   function captureInitialState() {
@@ -19,6 +30,173 @@ jQuery(document).ready(function ($) {
 
   // Capture initial state
   captureInitialState();
+
+  var tierLevel =
+    window.dne_ajax && dne_ajax.tier_level
+      ? parseInt(dne_ajax.tier_level, 10)
+      : null;
+  if (!tierLevel || isNaN(tierLevel)) {
+    var catLimit = parseInt(
+      $("#user_category_filter").data("tier-limit") || "999",
+      10
+    );
+    var storeLimit = parseInt(
+      $("#user_store_filter").data("tier-limit") || "999",
+      10
+    );
+    if (catLimit === 1 && storeLimit === 1) tierLevel = 1;
+    else if (catLimit === 3 && storeLimit === 3) tierLevel = 2;
+    else tierLevel = 3;
+  }
+
+  // Align with server Filter::validate_tier_limits()
+  var tierLimits = {
+    1: { total: 1, categories: 1, stores: 1 },
+    2: { total: 7, categories: 3, stores: 3 },
+    3: { total: 999, categories: 999, stores: 999 },
+  };
+
+  function getMultiVal($sel) {
+    // Works with native and Select2.
+    var v = $sel.val();
+    return Array.isArray(v) ? v : v ? [v] : [];
+  }
+
+  function clampArray(arr, max) {
+    arr = Array.from(new Set(arr)); // unique
+    return arr.length > max ? arr.slice(0, max) : arr;
+  }
+
+  function showTierWarning(message) {
+    var $container = $(".deal-notification-fields");
+    if ($container.length === 0) {
+      // Fallbacks for UM/other templates
+      $container = $("#save-notification-preferences").closest("form");
+      if ($container.length === 0) $container = $("form").first();
+    }
+    var $warning = $("#tier-warning");
+    if ($warning.length === 0) {
+      $warning = $(
+        '<div id="tier-warning" style="background:#ffebee;color:#c62828;padding:10px;margin:10px 0;border-radius:3px;border-left:4px solid #c62828;"></div>'
+      );
+      $container.prepend($warning);
+    }
+    $warning.html("<strong>⚠ Tier limit:</strong> " + message).show();
+  }
+  function hideTierWarning() {
+    $("#tier-warning").hide();
+  }
+
+  // Auto-enforce (clamp) + warn
+  function enforceTierLimits() {
+    var limits = tierLimits[tierLevel] || tierLimits[3];
+
+    var $discount = $("#user_discount_filter");
+    var $cats = $("#user_category_filter");
+    var $stores = $("#user_store_filter");
+
+    var hasDiscount = !!(
+      $discount.val() && String($discount.val()).trim() !== ""
+    );
+    var cats = getMultiVal($cats);
+    var stores = getMultiVal($stores);
+
+    // Per-bucket clamping
+    var clampedCats = clampArray(cats, limits.categories);
+    var clampedStores = clampArray(stores, limits.stores);
+
+    var changed =
+      clampedCats.length !== cats.length ||
+      clampedStores.length !== stores.length;
+
+    // Recalculate total (discount counts as 1 if present)
+    var total =
+      (hasDiscount ? 1 : 0) + clampedCats.length + clampedStores.length;
+
+    // If over total limit, drop newest from stores first, then categories, then discount last.
+    function dropLast(list) {
+      list.pop();
+      return list;
+    }
+
+    var messages = [];
+    if (clampedCats.length < cats.length)
+      messages.push("Max " + limits.categories + " categories for your tier.");
+    if (clampedStores.length < stores.length)
+      messages.push("Max " + limits.stores + " stores for your tier.");
+
+    while (total > limits.total && clampedStores.length) {
+      dropLast(clampedStores);
+      total--;
+      changed = true;
+      if (
+        !messages.includes(
+          "Max total selections is " + limits.total + " for your tier."
+        )
+      )
+        messages.push(
+          "Max total selections is " + limits.total + " for your tier."
+        );
+    }
+    while (total > limits.total && clampedCats.length) {
+      dropLast(clampedCats);
+      total--;
+      changed = true;
+      if (
+        !messages.includes(
+          "Max total selections is " + limits.total + " for your tier."
+        )
+      )
+        messages.push(
+          "Max total selections is " + limits.total + " for your tier."
+        );
+    }
+    if (total > limits.total && hasDiscount) {
+      $discount.val("");
+      hasDiscount = false;
+      total--;
+      changed = true;
+      if (
+        !messages.includes(
+          "Max total selections is " + limits.total + " for your tier."
+        )
+      )
+        messages.push(
+          "Max total selections is " + limits.total + " for your tier."
+        );
+    }
+
+    if (changed) {
+      DNE_ENFORCING = true;
+      $cats.val(clampedCats).trigger("change.select2");
+      $stores.val(clampedStores).trigger("change.select2");
+      DNE_ENFORCING = false;
+    }
+
+    if (messages.length) showTierWarning(messages.join(" "));
+    else hideTierWarning();
+
+    // Return whether state is valid (never blocks submit because we self-clamp)
+    return true;
+  }
+
+  // Wire up on input/selection changes
+  $("#user_discount_filter, #user_category_filter, #user_store_filter").on(
+    "change input",
+    function () {
+      if (DNE_ENFORCING) return;
+      enforceTierLimits();
+    }
+  );
+
+  // Also enforce right before save button fires (in case user pasted values etc.)
+  $(document).on(
+    "click",
+    "#deal-preferences-save, .deal-preferences-save",
+    function () {
+      enforceTierLimits();
+    }
+  );
 
   // Handle notification preference save button
   $("#save-notification-preferences").on("click", async function (e) {
@@ -103,7 +281,7 @@ jQuery(document).ready(function ($) {
     // Gather form data
     var formData = {
       action: "save_deal_notification_preferences",
-      nonce: $("#deal_notifications_nonce").val() || "deal_notifications_save",
+      nonce: dne_ajax.nonce,
       user_id: $button.data("user-id") || dne_ajax.user_id,
       notifications_enabled: $("#notifications_enabled").is(":checked")
         ? "1"
@@ -122,12 +300,12 @@ jQuery(document).ready(function ($) {
     );
 
     // Get category filters
-    $('input[name="user_category_filter[]"]:checked').each(function () {
+    $("#user_category_filter option:selected").each(function () {
       formData.user_category_filter.push($(this).val());
     });
 
-    // Get store filters
-    $('input[name="user_store_filter[]"]:checked').each(function () {
+    // Get store filters from the SELECT element, not checkboxes
+    $("#user_store_filter option:selected").each(function () {
       formData.user_store_filter.push($(this).val());
     });
 
@@ -232,7 +410,7 @@ jQuery(document).ready(function ($) {
               if (isDebug) console.log("[DNE] Prompting for permission...");
 
               // Show the slidedown prompt
-              await OneSignal.Slidedown.promptPush();
+              await OneSignal.Slidedown.promptPush({ force: true });
 
               // Wait for user response
               await new Promise((r) => setTimeout(r, 1000));
@@ -296,10 +474,9 @@ jQuery(document).ready(function ($) {
 
           // Step 8: Set tags for additional targeting
           await OneSignal.User.addTags({
-            wordpress_user_id: String(userId),
-            wordpress_user: "true",
-            subscription_date: new Date().toISOString(),
-            deal_notifications: "enabled",
+            dne_user_id: String(userId),
+            dne_deals_enabled: "1",
+            dne_subscribed_at: new Date().toISOString(),
           });
 
           if (isDebug) console.log("[DNE] Tags set successfully");
@@ -392,7 +569,7 @@ jQuery(document).ready(function ($) {
         action: "verify_telegram_connection",
         verification_code: code,
         user_id: userId,
-        nonce: "telegram_verify",
+        nonce: dne_ajax.nonce,
       },
       function (response) {
         if (response.success) {
@@ -428,7 +605,7 @@ jQuery(document).ready(function ($) {
       {
         action: "disconnect_telegram",
         user_id: userId,
-        nonce: "telegram_disconnect",
+        nonce: dne_ajax.nonce,
       },
       function (response) {
         if (response.success) {
@@ -537,6 +714,27 @@ jQuery(document).ready(function ($) {
         showNotice("error", "Failed to disconnect browser push.");
         $button.prop("disabled", false).text(originalText);
       });
+  });
+
+  // When Email/Telegram toggles change, show a notice
+  $('input[name="notification_delivery_methods[]"]').on("change", function () {
+    var chan = $(this).val();
+    var on = $(this).is(":checked");
+
+    if (!on) {
+      if (chan === "email") {
+        showNotice(
+          "info",
+          "Email disabled (pending) — click Save to apply."
+        );
+      }
+      if (chan === "telegram") {
+        showNotice(
+          "info",
+          "Telegram notifications disabled. You will no longer receive Telegram messages. (Disconnect is optional—use it only to revoke the bot.)"
+        );
+      }
+    }
   });
 
   /**
