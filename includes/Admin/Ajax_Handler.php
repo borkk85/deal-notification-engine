@@ -45,6 +45,10 @@ class Ajax_Handler
         // Process queue manually (admin only)
         add_action('wp_ajax_dne_process_queue_manually', [$this, 'process_queue_manually']);
 
+        // Quick toggle of notifications_enabled
+        add_action('wp_ajax_dne_set_notifications_enabled', [$this, 'set_notifications_enabled']);
+        add_action('wp_ajax_nopriv_dne_set_notifications_enabled', [$this, 'set_notifications_enabled']);
+
         // Reset failed notifications (admin only)
         add_action('wp_ajax_dne_reset_failed_notifications', [$this, 'reset_failed_notifications']);
 
@@ -56,6 +60,9 @@ class Ajax_Handler
 
         add_action('wp_ajax_dne_submit_feedback', [$this, 'submit_feedback']);
         add_action('wp_ajax_nopriv_dne_submit_feedback', [$this, 'submit_feedback']);
+
+        add_action('wp_ajax_dne_mark_all_reviewed', [$this, 'mark_all_feedback_reviewed']);
+
     }
 
     /**
@@ -210,6 +217,16 @@ class Ajax_Handler
             // Save Telegram chat ID
             update_user_meta($user_id, 'telegram_chat_id', $result['chat_id']);
             update_user_meta($user_id, 'telegram_verified', '1');
+
+            // Ensure 'telegram' is present in delivery methods so the checkbox stays checked on reload
+            $delivery_methods = get_user_meta($user_id, 'notification_delivery_methods', true);
+            if (!is_array($delivery_methods)) {
+                $delivery_methods = [];
+            }
+            if (!in_array('telegram', $delivery_methods, true)) {
+                $delivery_methods[] = 'telegram';
+                update_user_meta($user_id, 'notification_delivery_methods', array_values($delivery_methods));
+            }
 
             wp_send_json_success('Telegram connected successfully');
         } else {
@@ -368,7 +385,8 @@ class Ajax_Handler
     /**
      * Submit user feedback
      */
-    public function submit_feedback() {
+    public function submit_feedback()
+    {
         // Verify nonce
         if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'dne_feedback_submit')) {
             wp_send_json_error('Security verification failed');
@@ -463,6 +481,30 @@ class Ajax_Handler
     }
 
     /**
+     * Mark all feedback as reviewed (admin only)
+     */
+    public function mark_all_feedback_reviewed()
+    {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Insufficient permissions');
+            return;
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'dne_user_feedback';
+
+        $updated = $wpdb->query(
+            "UPDATE $table SET status = 'reviewed' WHERE status = 'pending'"
+        );
+
+        if ($updated !== false) {
+            wp_send_json_success("Marked $updated feedback items as reviewed");
+        } else {
+            wp_send_json_error('Failed to update feedback status');
+        }
+    }
+
+    /**
      * Manually cleanup OneSignal subscriptions for a user
      * 
      * @since 1.2.0
@@ -542,13 +584,13 @@ class Ajax_Handler
             }
         }
         // Allowed channels per tier (authoritative clamp)
-        // 1: email only
-        // 2: email + telegram
-        // 3: email + telegram + webpush
+        // 1: webpush only
+        // 2: webpush + telegram
+        // 3: email + webpush + telegram
         $allowed_by_tier = [
-            1 => ['email'],
-            2 => ['email', 'telegram'],
-            3 => ['email', 'telegram', 'webpush'],
+            1 => ['webpush'],
+            2 => ['webpush', 'telegram'],
+            3 => ['email', 'webpush', 'telegram'],
         ][$tier_level];
 
         // Keep only channels allowed for this tier
@@ -676,6 +718,40 @@ class Ajax_Handler
         if (get_option('dne_debug_mode') === '1') {
             error_log('[DNE Ajax] Pref log for user ' . $user_id . ': ' . $payload);
         }
+    }
+
+    /**
+     * Lightweight handler to set notifications_enabled without full preferences save
+     */
+    public function set_notifications_enabled()
+    {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'dne_ajax_nonce')) {
+            wp_send_json_error('Security verification failed');
+            return;
+        }
+
+        $current = get_current_user_id();
+        $user_id = isset($_POST['user_id']) ? intval($_POST['user_id']) : $current;
+        if (!$user_id) {
+            wp_send_json_error('Not logged in');
+            return;
+        }
+        if ($user_id !== $current && !current_user_can('edit_user', $user_id)) {
+            wp_send_json_error('Permission denied');
+            return;
+        }
+
+        $enabled = (isset($_POST['enabled']) && $_POST['enabled'] === '1') ? '1' : '0';
+        update_user_meta($user_id, 'notifications_enabled', $enabled);
+
+        $this->log_preference_update($user_id, [
+            'action'    => 'notifications_enabled_set',
+            'timestamp' => current_time('mysql'),
+            'enabled'   => $enabled,
+        ]);
+
+        wp_send_json_success(['enabled' => $enabled]);
     }
 
     /**

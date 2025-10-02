@@ -2,7 +2,7 @@
  * Deal Notification Engine - Frontend JavaScript
  * OneSignal SDK v16 Complete Fix with Cleanup
  */
-
+console.log('[DNE] Script loaded at:', Date.now());
 jQuery(document).ready(function ($) {
   // Track previous delivery methods to detect changes
   var previousDeliveryMethods = [];
@@ -13,9 +13,15 @@ jQuery(document).ready(function ($) {
       $(".deal-notification-fields").data("tier-level") || "3",
       10
     );
-    // Tier 1: email only; Tier 2: email + telegram; Tier 3: all
-    if (tier < 3) $(".dne-channel--telegram").hide();
-    if (tier < 2) $(".dne-channel--webpush").hide();
+    // UI visibility only (server clamps authoritatively)
+    // New mapping: 1=webpush; 2=webpush+telegram; 3=email+webpush+telegram
+    var $email   = $(".dne-channel--email");
+    var $webpush = $(".dne-channel--webpush");
+    var $tg      = $(".dne-channel--telegram");
+    $email.show(); $webpush.show(); $tg.show();
+    if (tier === 1) { $email.hide(); $tg.hide(); }
+    else if (tier === 2) { $email.hide(); }
+    // tier 3 shows all
   });
 
   // Store initial state on page load
@@ -327,6 +333,26 @@ jQuery(document).ready(function ($) {
       });
   });
 
+  // Quick toggle for notifications_enabled without full form submit
+  $(document).on('change', '#notifications_enabled', function () {
+    if (typeof dne_ajax === 'undefined') return;
+    var on = $(this).is(':checked') ? '1' : '0';
+    $.post(dne_ajax.ajax_url, {
+      action: 'dne_set_notifications_enabled',
+      nonce: dne_ajax.nonce,
+      user_id: dne_ajax.user_id,
+      enabled: on,
+    }, function (res) {
+      if (res && res.success) {
+        showNotice('info', on === '1' ? 'Notifications enabled' : 'Notifications disabled');
+      } else {
+        showNotice('error', (res && res.data) ? res.data : 'Failed to update setting');
+      }
+    }).fail(function(){
+      showNotice('error', 'Network error updating setting');
+    });
+  });
+
   /**
    * Handle OneSignal subscription with SDK v16 methods
    * Includes cleanup of disabled subscriptions
@@ -334,6 +360,7 @@ jQuery(document).ready(function ($) {
   async function handleOneSignalSubscription() {
     return new Promise((resolve) => {
       if (typeof window.OneSignalDeferred === "undefined") {
+        console.log('[DNE] OneSignal detected, will initialize');
         resolve({
           success: false,
           message:
@@ -880,3 +907,4 @@ jQuery(document).ready(function ($) {
     `;
   document.head.appendChild(style);
 })();
+console.log('[DNE] Script finished loading');

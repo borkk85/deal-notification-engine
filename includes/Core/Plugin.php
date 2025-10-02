@@ -113,6 +113,9 @@ class Plugin
         // Enqueue scripts
         add_action('wp_enqueue_scripts', [$this, 'enqueue_scripts']);
         add_action('admin_enqueue_scripts', [$this, 'enqueue_admin_scripts']);
+
+        // Cleanup when a user gets deleted (e.g., via Ultimate Member)
+        add_action('delete_user', [$this, 'handle_user_deleted']);
     }
 
     /**
@@ -216,9 +219,9 @@ class Plugin
 
                         // Allowed by tier mapping (server authority)
                         $allowed_by_tier_map = [
-                            1 => ['email'],
-                            2 => ['email', 'telegram'],
-                            3 => ['email', 'telegram', 'webpush'],
+                            1 => ['webpush'],
+                            2 => ['webpush', 'telegram'],
+                            3 => ['email', 'webpush', 'telegram'],
                         ];
                         $allowed_by_tier = $allowed_by_tier_map[$tier];
 
@@ -276,6 +279,110 @@ class Plugin
                     echo '</tbody></table>';
                 } else {
                     echo '<p>' . esc_html__('No users with notifications enabled.', 'deal-notification-engine') . '</p>';
+                }
+                ?>
+            </div>
+
+            <!-- User Feedback Section -->
+            <div class="card-custom card">
+                <h2><?php echo esc_html__('User Feedback Collection', 'deal-notification-engine'); ?></h2>
+                <p><?php echo esc_html__('Feedback submissions from users about the notification system. Use this data to improve the plugin experience.', 'deal-notification-engine'); ?></p>
+                
+                <?php
+                // Get recent feedback
+                global $wpdb;
+                $table_feedback = $wpdb->prefix . 'dne_user_feedback';
+                
+                if ($wpdb->get_var("SHOW TABLES LIKE '$table_feedback'") === $table_feedback) {
+                    // Get feedback stats by type
+                    $feedback_stats = $wpdb->get_results(
+                        "SELECT type, COUNT(*) as count 
+                         FROM $table_feedback 
+                         GROUP BY type 
+                         ORDER BY count DESC"
+                    );
+                    
+                    $total_feedback = $wpdb->get_var("SELECT COUNT(*) FROM $table_feedback");
+                    $recent_feedback = $wpdb->get_results(
+                        "SELECT f.*, u.display_name 
+                         FROM $table_feedback f 
+                         LEFT JOIN {$wpdb->users} u ON f.user_id = u.ID 
+                         ORDER BY f.created_at DESC 
+                         LIMIT 25"
+                    );
+                    
+                    // Display stats summary
+                    echo '<div style="display: flex; gap: 20px; margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px;">';
+                    echo '<div><strong>Total Feedback:</strong> ' . intval($total_feedback) . '</div>';
+                    
+                    foreach ($feedback_stats as $stat) {
+                        $emoji = [
+                            'satisfaction' => '😊',
+                            'suggestion' => '💡', 
+                            'complaint' => '⚠️',
+                            'question' => '❓'
+                        ][$stat->type] ?? '📝';
+                        
+                        $color = [
+                            'satisfaction' => '#28a745',
+                            'suggestion' => '#007cba', 
+                            'complaint' => '#dc3545',
+                            'question' => '#ffc107'
+                        ][$stat->type] ?? '#666';
+                        
+                        echo '<div>';
+                        echo '<strong style="color: ' . $color . ';">' . $emoji . ' ' . ucfirst($stat->type) . ':</strong> ' . intval($stat->count);
+                        echo '</div>';
+                    }
+                    echo '</div>';
+                    
+                    if ($recent_feedback) {
+                        echo '<div style="margin-bottom: 10px;">';
+                        echo '<strong>Recent Feedback:</strong>';
+                        echo '<button type="button" onclick="if(confirm(\'Mark all feedback as reviewed?\')) { 
+                                jQuery.post(ajaxurl, {action: \'dne_mark_all_reviewed\'}, function() { location.reload(); }); }" 
+                                class="button button-secondary" style="float: right; margin-left: 10px;">Mark All as Reviewed</button>';
+                        echo '<button type="button" onclick="if(confirm(\'Export all feedback as CSV?\')) { 
+                                window.open(\'?page=deal-notifications&export_feedback=1\'); }" 
+                                class="button button-secondary" style="float: right;">Export CSV</button>';
+                        echo '</div>';
+                        
+                        echo '<table class="wp-list-table widefat fixed striped">';
+                        echo '<thead><tr>
+                                <th style="width: 15%;">User</th>
+                                <th style="width: 12%;">Type</th>
+                                <th style="width: 50%;">Message</th>
+                                <th style="width: 8%;">Status</th>
+                                <th style="width: 15%;">Date</th>
+                            </tr></thead><tbody>';
+                        
+                        foreach ($recent_feedback as $feedback) {
+                            $user_name = $feedback->display_name ?: 'User #' . $feedback->user_id;
+                            $type_emoji = [
+                                'satisfaction' => '😊',
+                                'suggestion' => '💡', 
+                                'complaint' => '⚠️',
+                                'question' => '❓'
+                            ][$feedback->type] ?? '📝';
+                            
+                            $status_color = $feedback->status === 'pending' ? '#d63638' : '#666';
+                            $row_style = $feedback->status === 'pending' ? 'background: #fff8e1;' : '';
+                            
+                            echo '<tr style="' . $row_style . '">';
+                            echo '<td>' . esc_html($user_name) . '</td>';
+                            echo '<td>' . $type_emoji . ' ' . esc_html(ucfirst($feedback->type)) . '</td>';
+                            echo '<td>' . esc_html($feedback->message) . '</td>';
+                            echo '<td><span style="color: ' . $status_color . ';">' . esc_html(ucfirst($feedback->status)) . '</span></td>';
+                            echo '<td>' . esc_html(date('M j, Y', strtotime($feedback->created_at))) . '</td>';
+                            echo '</tr>';
+                        }
+                        
+                        echo '</tbody></table>';
+                    } else {
+                        echo '<p>' . esc_html__('No feedback submissions yet.', 'deal-notification-engine') . '</p>';
+                    }
+                } else {
+                    echo '<p>' . esc_html__('Feedback table not created yet. Please deactivate and reactivate the plugin.', 'deal-notification-engine') . '</p>';
                 }
                 ?>
             </div>
@@ -603,6 +710,59 @@ class Plugin
                     });
                 });
             ');
+        }
+    }
+
+    /**
+     * Cleanup user data and queue rows when a user is deleted
+     */
+    public function handle_user_deleted($user_id)
+    {
+        global $wpdb;
+        // Remove queued notifications for this user
+        $table_queue = $wpdb->prefix . 'dne_notification_queue';
+        $wpdb->delete($table_queue, ['user_id' => (int)$user_id]);
+
+        // Clear notification-related user meta
+        $keys = [
+            'notifications_enabled',
+            'notification_delivery_methods',
+            'user_discount_filter',
+            'user_category_filter',
+            'user_store_filter',
+            // OneSignal
+            'onesignal_subscribed',
+            'onesignal_subscription_id',
+            'onesignal_player_id',
+            'onesignal_external_id_set',
+            'onesignal_unsubscription_date',
+            // Telegram
+            'telegram_chat_id',
+            'telegram_verified',
+        ];
+        foreach ($keys as $k) {
+            delete_user_meta($user_id, $k);
+        }
+
+        // Remove any pending Telegram verifications
+        $table_verify = $wpdb->prefix . 'dne_telegram_verifications';
+        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table_verify)) === $table_verify) {
+            $wpdb->delete($table_verify, ['user_id' => (int)$user_id]);
+        }
+
+        // Log cleanup (if log table exists)
+        $table_log = $wpdb->prefix . 'dne_notification_log';
+        if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table_log)) === $table_log) {
+            $wpdb->insert($table_log, [
+                'user_id' => (int)$user_id,
+                'post_id' => null,
+                'delivery_method' => null,
+                'action' => 'user_deleted_cleanup',
+                'status' => 'success',
+                'details' => wp_json_encode(['message' => 'User deleted; queue + metas cleaned']),
+                'sent_at' => null,
+                'created_at' => current_time('mysql')
+            ], ['%d','%s','%s','%s','%s','%s','%s','%s']);
         }
     }
 }

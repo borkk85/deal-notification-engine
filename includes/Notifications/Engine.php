@@ -110,7 +110,93 @@ class Engine {
         // Get deal details
         $deal_data = $this->extract_deal_data($post_id, $post);
         dne_debug("Deal data extracted: " . wp_json_encode($deal_data));
-        
+
+        // Social: Telegram Channel broadcast (optional)
+        if (get_option('dne_tg_channel_enabled') === '1') {
+            try {
+                $chan = new \DNE\Integrations\Social\Telegram_Channel();
+                if ($chan->is_configured()) {
+                    $r = $chan->send_post($post, $deal_data);
+                    $this->queue->log_activity([
+                        'user_id' => null,
+                        'post_id' => $post_id,
+                        'delivery_method' => 'telegram_channel',
+                        'action' => $r['success'] ? 'social_post_sent' : 'social_post_failed',
+                        'status' => $r['success'] ? 'success' : 'failed',
+                        'details' => ['message' => $r['message']],
+                        'sent_at' => $r['success'] ? current_time('mysql') : null,
+                    ]);
+                } else {
+                    dne_debug('Telegram Channel not configured; skipping broadcast');
+                }
+            } catch (\Throwable $e) {
+                $this->queue->log_activity([
+                    'user_id' => null,
+                    'post_id' => $post_id,
+                    'delivery_method' => 'telegram_channel',
+                    'action' => 'social_post_failed',
+                    'status' => 'failed',
+                    'details' => ['exception' => $e->getMessage()],
+                ]);
+            }
+        }
+
+        // Social: Facebook Page broadcast (optional)
+        if (get_option('dne_fb_enabled') === '1') {
+            try {
+                $fb = new \DNE\Integrations\Social\Facebook();
+                if ($fb->is_configured()) {
+                    $r = $fb->send_post($post, $deal_data);
+                    $this->queue->log_activity([
+                        'user_id' => null,
+                        'post_id' => $post_id,
+                        'delivery_method' => 'facebook',
+                        'action' => $r['success'] ? 'social_post_sent' : 'social_post_failed',
+                        'status' => $r['success'] ? 'success' : 'failed',
+                        'details' => ['message' => $r['message']],
+                        'sent_at' => $r['success'] ? current_time('mysql') : null,
+                    ]);
+                }
+            } catch (\Throwable $e) {
+                $this->queue->log_activity([
+                    'user_id' => null,
+                    'post_id' => $post_id,
+                    'delivery_method' => 'facebook',
+                    'action' => 'social_post_failed',
+                    'status' => 'failed',
+                    'details' => ['exception' => $e->getMessage()],
+                ]);
+            }
+        }
+
+        // Social: X (Twitter) broadcast (optional)
+        if (get_option('dne_x_enabled') === '1') {
+            try {
+                $tw = new \DNE\Integrations\Social\X();
+                if ($tw->is_configured()) {
+                    $r = $tw->send_post($post, $deal_data);
+                    $this->queue->log_activity([
+                        'user_id' => null,
+                        'post_id' => $post_id,
+                        'delivery_method' => 'x',
+                        'action' => $r['success'] ? 'social_post_sent' : 'social_post_failed',
+                        'status' => $r['success'] ? 'success' : 'failed',
+                        'details' => ['message' => $r['message']],
+                        'sent_at' => $r['success'] ? current_time('mysql') : null,
+                    ]);
+                }
+            } catch (\Throwable $e) {
+                $this->queue->log_activity([
+                    'user_id' => null,
+                    'post_id' => $post_id,
+                    'delivery_method' => 'x',
+                    'action' => 'social_post_failed',
+                    'status' => 'failed',
+                    'details' => ['exception' => $e->getMessage()],
+                ]);
+            }
+        }
+
         // Find matching users using Filter
         $matched_users = $this->filter->find_matching_users($deal_data);
         dne_debug("Matched users count: " . count($matched_users) . " - Users: " . wp_json_encode($matched_users));
@@ -167,6 +253,9 @@ class Engine {
             'url' => get_permalink($post_id),
             'excerpt' => wp_trim_words($post->post_content, 30),
             'discount' => 0,
+            'price' => null,
+            'old_price' => null,
+            'currency' => 'SEK',
             'categories' => [],
             'stores' => []
         ];
@@ -217,6 +306,25 @@ class Engine {
                     $data['discount'] = intval($matches[1]);
                 }
             }
+        }
+
+        // Prices (if available)
+        $discount_price = get_post_meta($post_id, '_discount_price', true);
+        $original_price = get_post_meta($post_id, '_original_price', true);
+        // Rounding precision (default 0). Override with: add_filter('dne_price_round_precision', fn($p,$post_id)=>2, 10, 2);
+        $precision = has_filter('dne_price_round_precision') ? (int) apply_filters('dne_price_round_precision', 0, $post_id) : 0;
+        if ($discount_price !== '' && $discount_price !== null) {
+            $val = round((float) $discount_price, max(0, $precision));
+            $data['price'] = $precision > 0 ? number_format($val, $precision, '.', '') : (string) (int) $val;
+        }
+        if ($original_price !== '' && $original_price !== null) {
+            $val = round((float) $original_price, max(0, $precision));
+            $data['old_price'] = $precision > 0 ? number_format($val, $precision, '.', '') : (string) (int) $val;
+        }
+        // Allow currency override via filter
+        if (has_filter('dne_social_currency')) {
+            $cur = apply_filters('dne_social_currency', $data['currency'], $post_id);
+            if (is_string($cur) && $cur !== '') $data['currency'] = $cur;
         }
 
         // Debug: record discount source and value

@@ -299,7 +299,30 @@ class Filter
         }
         $methods = $this->get_user_delivery_methods($user_id);
         dne_debug("gating {$channel} for user {$user_id}: enabled=".(get_user_meta($user_id,'notifications_enabled',true)==='1'?'1':'0').", methods=".json_encode($this->get_user_delivery_methods($user_id)));
+        if (!in_array($channel, $methods, true)) {
+            return false;
+        }
 
-        return in_array($channel, $methods, true);
+        // Enforce tier allow-list at send time (defense-in-depth)
+        $user = get_userdata($user_id);
+        $tier = 1;
+        if ($user && is_array($user->roles)) {
+            foreach ($user->roles as $r) {
+                if (strpos($r, 'um_deal') !== false && strpos($r, 'tier') !== false) {
+                    if (strpos($r, 'tier-3') !== false || strpos($r, 'tier_3') !== false) { $tier = 3; break; }
+                    if (strpos($r, 'tier-2') !== false || strpos($r, 'tier_2') !== false) { $tier = 2; break; }
+                    $tier = 1;
+                }
+            }
+        }
+        $allowed_by_tier = [
+            1 => ['webpush'],
+            2 => ['webpush', 'telegram'],
+            3 => ['email', 'webpush', 'telegram'],
+        ];
+        if (!in_array($channel, $allowed_by_tier[$tier], true)) {
+            return false;
+        }
+        return true;
     }
 }
