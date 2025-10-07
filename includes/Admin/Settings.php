@@ -31,12 +31,15 @@ class Settings
      */
     public function register_settings()
     {
+        $notifications_page = 'dne-settings-notifications';
+        $social_page        = 'dne-settings-social';
+
         // General Settings Section
         add_settings_section(
             'dne_general_settings',
             __('General Settings', 'deal-notification-engine'),
             [$this, 'general_section_callback'],
-            'dne-settings'
+            $notifications_page
         );
 
         register_setting('dne_settings_group', 'dne_enabled');
@@ -44,7 +47,7 @@ class Settings
             'dne_enabled',
             __('Enable Notifications', 'deal-notification-engine'),
             [$this, 'render_checkbox'],
-            'dne-settings',
+            $notifications_page,
             'dne_general_settings',
             ['field' => 'dne_enabled', 'label' => 'Enable the notification system']
         );
@@ -54,7 +57,7 @@ class Settings
             'dne_process_immediately',
             __('Send Immediately', 'deal-notification-engine'),
             [$this, 'render_checkbox'],
-            'dne-settings',
+            $notifications_page,
             'dne_general_settings',
             ['field' => 'dne_process_immediately', 'label' => 'Send notifications immediately when deals are published']
         );
@@ -64,7 +67,7 @@ class Settings
             'dne_email_settings',
             __('Email Settings', 'deal-notification-engine'),
             [$this, 'email_section_callback'],
-            'dne-settings'
+            $notifications_page
         );
 
         register_setting('dne_settings_group', 'dne_email_from_name');
@@ -72,7 +75,7 @@ class Settings
             'dne_email_from_name',
             __('From Name', 'deal-notification-engine'),
             [$this, 'render_text_field'],
-            'dne-settings',
+            $notifications_page,
             'dne_email_settings',
             ['field' => 'dne_email_from_name', 'placeholder' => get_bloginfo('name')]
         );
@@ -82,7 +85,7 @@ class Settings
             'dne_email_from_address',
             __('From Email', 'deal-notification-engine'),
             [$this, 'render_text_field'],
-            'dne-settings',
+            $notifications_page,
             'dne_email_settings',
             ['field' => 'dne_email_from_address', 'placeholder' => get_option('admin_email'), 'type' => 'email']
         );
@@ -92,7 +95,7 @@ class Settings
             'dne_telegram_settings',
             __('Telegram Settings', 'deal-notification-engine'),
             [$this, 'telegram_section_callback'],
-            'dne-settings'
+            $notifications_page
         );
 
         register_setting('dne_settings_group', 'dne_telegram_enabled');
@@ -100,7 +103,7 @@ class Settings
             'dne_telegram_enabled',
             __('Enable Telegram', 'deal-notification-engine'),
             [$this, 'render_checkbox'],
-            'dne-settings',
+            $notifications_page,
             'dne_telegram_settings',
             ['field' => 'dne_telegram_enabled', 'label' => 'Enable Telegram notifications']
         );
@@ -110,7 +113,7 @@ class Settings
             'dne_telegram_bot_token',
             __('Bot Token', 'deal-notification-engine'),
             [$this, 'render_password_field'],
-            'dne-settings',
+            $notifications_page,
             'dne_telegram_settings',
             [
                 'field' => 'dne_telegram_bot_token',
@@ -119,12 +122,26 @@ class Settings
             ]
         );
 
+        register_setting('dne_settings_group', 'dne_telegram_webhook_secret');
+        add_settings_field(
+            'dne_telegram_webhook_secret',
+            __('Webhook Secret Token', 'deal-notification-engine'),
+            [$this, 'render_password_field'],
+            $notifications_page,
+            'dne_telegram_settings',
+            [
+                'field' => 'dne_telegram_webhook_secret',
+                'placeholder' => __('Optional security token', 'deal-notification-engine'),
+                'description' => __('Set the same secret when configuring Telegram setWebhook so incoming requests can be verified.', 'deal-notification-engine')
+            ]
+        );
+
         register_setting('dne_settings_group', 'dne_telegram_bot_username');
         add_settings_field(
             'dne_telegram_bot_username',
             __('Bot Username', 'deal-notification-engine'),
             [$this, 'render_text_field'],
-            'dne-settings',
+            $notifications_page,
             'dne_telegram_settings',
             [
                 'field' => 'dne_telegram_bot_username',
@@ -138,7 +155,7 @@ class Settings
             'dne_onesignal_settings',
             __('OneSignal Settings', 'deal-notification-engine'),
             [$this, 'onesignal_section_callback'],
-            'dne-settings'
+            $notifications_page
         );
 
         register_setting('dne_settings_group', 'dne_onesignal_enabled');
@@ -146,7 +163,7 @@ class Settings
             'dne_onesignal_enabled',
             __('Enable OneSignal', 'deal-notification-engine'),
             [$this, 'render_checkbox'],
-            'dne-settings',
+            $notifications_page,
             'dne_onesignal_settings',
             ['field' => 'dne_onesignal_enabled', 'label' => 'Enable web push notifications via OneSignal']
         );
@@ -156,7 +173,7 @@ class Settings
             'dne_onesignal_app_id',
             __('App ID', 'deal-notification-engine'),
             [$this, 'render_text_field'],
-            'dne-settings',
+            $notifications_page,
             'dne_onesignal_settings',
             [
                 'field' => 'dne_onesignal_app_id',
@@ -170,7 +187,7 @@ class Settings
             'dne_onesignal_api_key',
             __('REST API Key', 'deal-notification-engine'),
             [$this, 'render_password_field'],
-            'dne-settings',
+            $notifications_page,
             'dne_onesignal_settings',
             [
                 'field' => 'dne_onesignal_api_key',
@@ -184,7 +201,7 @@ class Settings
             'dne_advanced_settings',
             __('Advanced Settings', 'deal-notification-engine'),
             [$this, 'advanced_section_callback'],
-            'dne-settings'
+            $notifications_page
         );
 
         register_setting('dne_settings_group', 'dne_batch_size');
@@ -192,7 +209,7 @@ class Settings
             'dne_batch_size',
             __('Batch Size', 'deal-notification-engine'),
             [$this, 'render_number_field'],
-            'dne-settings',
+            $notifications_page,
             'dne_advanced_settings',
             [
                 'field' => 'dne_batch_size',
@@ -208,7 +225,7 @@ class Settings
             'dne_debug_mode',
             __('Debug Mode', 'deal-notification-engine'),
             [$this, 'render_checkbox'],
-            'dne-settings',
+            $notifications_page,
             'dne_advanced_settings',
             ['field' => 'dne_debug_mode', 'label' => 'Enable debug logging']
         );
@@ -218,7 +235,7 @@ class Settings
             'dne_social_settings',
             __('Social Broadcast', 'deal-notification-engine'),
             [$this, 'social_section_callback'],
-            'dne-settings'
+            $social_page
         );
 
         // Telegram Channel
@@ -227,7 +244,7 @@ class Settings
             'dne_tg_channel_enabled',
             __('Enable Telegram Channel', 'deal-notification-engine'),
             [$this, 'render_checkbox'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_tg_channel_enabled', 'label' => 'Broadcast newly published deals to a Telegram channel']
         );
@@ -237,7 +254,7 @@ class Settings
             'dne_tg_channel_chat_id',
             __('Telegram Channel ID', 'deal-notification-engine'),
             [$this, 'render_text_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_tg_channel_chat_id', 'placeholder' => '@your_channel or -100xxxxxxxxxx']
         );
@@ -247,7 +264,7 @@ class Settings
             'dne_tg_channel_bot_token',
             __('Bot Token Override (optional)', 'deal-notification-engine'),
             [$this, 'render_password_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_tg_channel_bot_token', 'description' => 'Leave blank to inherit the main Telegram bot token']
         );
@@ -257,7 +274,7 @@ class Settings
             'dne_tg_channel_template',
             __('Telegram Message Template', 'deal-notification-engine'),
             [$this, 'render_textarea_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_tg_channel_template', 'placeholder' => "<b>{title}</b>\n{url}"]
         );
@@ -268,7 +285,7 @@ class Settings
             'dne_fb_enabled',
             __('Enable Facebook Page', 'deal-notification-engine'),
             [$this, 'render_checkbox'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_fb_enabled', 'label' => 'Broadcast newly published deals to a Facebook Page']
         );
@@ -278,7 +295,7 @@ class Settings
             'dne_fb_page_id',
             __('Facebook Page ID', 'deal-notification-engine'),
             [$this, 'render_text_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_fb_page_id', 'placeholder' => '123456789012345']
         );
@@ -288,7 +305,7 @@ class Settings
             'dne_fb_app_id',
             __('Facebook App ID (optional)', 'deal-notification-engine'),
             [$this, 'render_text_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_fb_app_id']
         );
@@ -298,7 +315,7 @@ class Settings
             'dne_fb_app_secret',
             __('Facebook App Secret (optional)', 'deal-notification-engine'),
             [$this, 'render_password_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_fb_app_secret']
         );
@@ -308,7 +325,7 @@ class Settings
             'dne_fb_page_token',
             __('Facebook Page Access Token', 'deal-notification-engine'),
             [$this, 'render_password_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_fb_page_token', 'description' => 'Long-lived Page access token with pages_manage_posts']
         );
@@ -318,7 +335,7 @@ class Settings
             'dne_fb_template',
             __('Facebook Message Template', 'deal-notification-engine'),
             [$this, 'render_textarea_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_fb_template', 'placeholder' => "{title}\n{url}"]
         );
@@ -329,7 +346,7 @@ class Settings
             'dne_x_enabled',
             __('Enable X (Twitter)', 'deal-notification-engine'),
             [$this, 'render_checkbox'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_x_enabled', 'label' => 'Broadcast newly published deals to X (twitterapi.io)']
         );
@@ -337,11 +354,11 @@ class Settings
         register_setting('dne_settings_group', 'dne_x_api_key', [$this, 'sanitize_token']);
         add_settings_field(
             'dne_x_api_key',
-            __('twitterapi.io API Key', 'deal-notification-engine'),
+            __('X API Key (RapidAPI)', 'deal-notification-engine'),
             [$this, 'render_password_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
-            ['field' => 'dne_x_api_key']
+            ['field' => 'dne_x_api_key', 'description' => __('Used for x-rapidapi-key header when posting tweets', 'deal-notification-engine')]
         );
 
         register_setting('dne_settings_group', 'dne_x_user_name');
@@ -349,7 +366,7 @@ class Settings
             'dne_x_user_name',
             __('X Username', 'deal-notification-engine'),
             [$this, 'render_text_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_x_user_name']
         );
@@ -359,7 +376,7 @@ class Settings
             'dne_x_email',
             __('X Email', 'deal-notification-engine'),
             [$this, 'render_text_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_x_email']
         );
@@ -369,7 +386,7 @@ class Settings
             'dne_x_password',
             __('X Password', 'deal-notification-engine'),
             [$this, 'render_password_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_x_password']
         );
@@ -379,7 +396,7 @@ class Settings
             'dne_x_totp_secret',
             __('X TOTP Secret (2FA)', 'deal-notification-engine'),
             [$this, 'render_password_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_x_totp_secret']
         );
@@ -389,19 +406,23 @@ class Settings
             'dne_x_proxy',
             __('Proxy', 'deal-notification-engine'),
             [$this, 'render_text_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_x_proxy', 'placeholder' => 'http://user:pass@host:port']
         );
 
-        register_setting('dne_settings_group', 'dne_x_login_cookies', [$this, 'sanitize_token']);
+        register_setting('dne_settings_group', 'dne_x_login_cookies');
         add_settings_field(
             'dne_x_login_cookies',
-            __('Login Cookies (auto-filled)', 'deal-notification-engine'),
-            [$this, 'render_password_field'],
-            'dne-settings',
+            __('Auth Token (login_cookie)', 'deal-notification-engine'),
+            [$this, 'render_textarea_field'],
+            $social_page,
             'dne_social_settings',
-            ['field' => 'dne_x_login_cookies', 'description' => 'Filled by Connect/Refresh Session']
+            [
+                'field' => 'dne_x_login_cookies',
+                'description' => __('Optional: paste your twitterapi.io login_cookie here to post without running the login endpoint.', 'deal-notification-engine'),
+                'rows' => 3,
+            ]
         );
 
         register_setting('dne_settings_group', 'dne_x_template');
@@ -409,7 +430,7 @@ class Settings
             'dne_x_template',
             __('X Tweet Template', 'deal-notification-engine'),
             [$this, 'render_text_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_x_template', 'placeholder' => '{title} {url}']
         );
@@ -418,7 +439,7 @@ class Settings
             'dne_tg_channel_enabled',
             __('Enable Telegram Channel', 'deal-notification-engine'),
             [$this, 'render_checkbox'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_tg_channel_enabled', 'label' => 'Broadcast newly published deals to a Telegram channel']
         );
@@ -428,7 +449,7 @@ class Settings
             'dne_tg_channel_chat_id',
             __('Telegram Channel ID', 'deal-notification-engine'),
             [$this, 'render_text_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_tg_channel_chat_id', 'placeholder' => '@your_channel or -100xxxxxxxxxx']
         );
@@ -438,7 +459,7 @@ class Settings
             'dne_tg_channel_bot_token',
             __('Bot Token Override (optional)', 'deal-notification-engine'),
             [$this, 'render_password_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_tg_channel_bot_token', 'description' => 'Leave blank to inherit the main Telegram bot token']
         );
@@ -448,7 +469,7 @@ class Settings
             'dne_tg_channel_template',
             __('Telegram Message Template', 'deal-notification-engine'),
             [$this, 'render_textarea_field'],
-            'dne-settings',
+            $social_page,
             'dne_social_settings',
             ['field' => 'dne_tg_channel_template', 'placeholder' => '<b>{title}</b>\n{url}']
         );
@@ -477,12 +498,26 @@ class Settings
         <div class="wrap">
             <h1><?php echo esc_html__('Deal Notification Settings', 'deal-notification-engine'); ?></h1>
 
+            <h2 class="nav-tab-wrapper" id="dne-tabs">
+                <a href="#" class="nav-tab" data-dne-tab="notifications"><?php echo esc_html__('Notifications', 'deal-notification-engine'); ?></a>
+                <a href="#" class="nav-tab" data-dne-tab="social"><?php echo esc_html__('Social', 'deal-notification-engine'); ?></a>
+            </h2>
+
             <?php settings_errors(); ?>
 
-            <form method="post" action="options.php">
+            <form id="dne-settings-form" method="post" action="options.php">
                 <?php
                 settings_fields('dne_settings_group');
-                do_settings_sections('dne-settings');
+                ?>
+                <div class="dne-panes">
+                    <div id="dne-pane-notifications" class="dne-pane active">
+                        <?php do_settings_sections('dne-settings-notifications'); ?>
+                    </div>
+                    <div id="dne-pane-social" class="dne-pane">
+                        <?php do_settings_sections('dne-settings-social'); ?>
+                    </div>
+                </div>
+                <?php
                 submit_button();
                 ?>
             </form>
@@ -597,7 +632,69 @@ class Settings
                 </p>
             </div>
         </div>
-    <?php
+        <style>
+            .dne-pane{display:none}
+            .dne-pane.active{display:block}
+        </style>
+        <script>
+        (function(){
+            function ready(fn){
+                if(document.readyState !== 'loading'){
+                    fn();
+                } else {
+                    document.addEventListener('DOMContentLoaded', fn);
+                }
+            }
+
+            ready(function(){
+                var tabs = document.querySelectorAll('#dne-tabs .nav-tab');
+                if(!tabs.length){
+                    return;
+                }
+
+                var panes = {
+                    notifications: document.getElementById('dne-pane-notifications'),
+                    social: document.getElementById('dne-pane-social')
+                };
+
+                function activate(tab){
+                    if(!panes[tab]){
+                        return;
+                    }
+
+                    Object.keys(panes).forEach(function(key){
+                        if(panes[key]){
+                            panes[key].classList.toggle('active', key === tab);
+                        }
+                    });
+
+                    tabs.forEach(function(button){
+                        var isActive = button.getAttribute('data-dne-tab') === tab;
+                        button.classList.toggle('nav-tab-active', isActive);
+                    });
+
+                    try {
+                        localStorage.setItem('dne_active_tab', tab);
+                    } catch (e) {}
+                }
+
+                tabs.forEach(function(tabButton){
+                    tabButton.addEventListener('click', function(event){
+                        event.preventDefault();
+                        activate(this.getAttribute('data-dne-tab') || 'notifications');
+                    });
+                });
+
+                var saved = null;
+                try {
+                    saved = localStorage.getItem('dne_active_tab');
+                } catch (e) {}
+
+                activate(saved === 'social' ? 'social' : 'notifications');
+            });
+        })();
+        </script>
+<?php
     }
 
     /**

@@ -2,6 +2,9 @@
 
 namespace DNE\Core;
 
+use DNE\Admin\Tables\Notification_Log_Table;
+use DNE\Admin\Tables\User_Gating_Table;
+
 /**
  * Main plugin class - Singleton pattern
  */
@@ -143,6 +146,24 @@ class Plugin
             'deal-notifications-settings',
             [$this->settings, 'render_settings_page']
         );
+
+        add_submenu_page(
+            'deal-notifications',
+            __('User Gating', 'deal-notification-engine'),
+            __('User Gating', 'deal-notification-engine'),
+            'manage_options',
+            'deal-notifications-gating',
+            [$this, 'render_gating_page']
+        );
+
+        add_submenu_page(
+            'deal-notifications',
+            __('Notification Log', 'deal-notification-engine'),
+            __('Notification Log', 'deal-notification-engine'),
+            'manage_options',
+            'deal-notifications-log',
+            [$this, 'render_log_page']
+        );
     }
 
     /**
@@ -152,31 +173,120 @@ class Plugin
     {
 ?>
         <style>
-            .card-custom {
-                width: 100% !important;
-                max-width: none !important;
+            .dne-admin-wrap .notice {
+                margin-top: 16px;
+                margin-bottom: 24px;
+            }
+            .dne-panel {
+                width: 100%;
+                max-width: none;
+                padding: 24px;
+                border-radius: 8px;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+                box-sizing: border-box;
+            }
+            .dne-panel + .dne-panel {
+                margin-top: 32px;
+            }
+            .dne-table-wrap {
+                overflow-x: auto;
+                border: 1px solid #dcdcde;
+                border-radius: 6px;
+                background: #fff;
+                margin-top: 12px;
+            }
+            .dne-table-wrap table {
+                margin: 0;
+                min-width: 720px;
+            }
+            .dne-table-wrap th,
+            .dne-table-wrap td {
+                vertical-align: top;
+                padding: 12px 16px;
+            }
+            .dne-table-wrap thead th {
+                position: sticky;
+                top: 0;
+                background: #f6f7f7;
+                z-index: 1;
+            }
+            .dne-empty {
+                margin-top: 12px;
+                color: #6c7781;
+                font-style: italic;
+            }
+            .dne-action-bar {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 10px;
+                margin-top: 16px;
+            }
+            .dne-action-bar__title {
+                margin-right: auto;
+                font-size: 14px;
+            }
+            .dne-log-details {
+                max-width: 380px;
+                word-break: break-word;
+                white-space: pre-line;
+            }
+            .dne-status {
+                color: #2c3338;
+            }
+            .dne-feedback-row--pending {
+                background: #fff8e1;
+            }
+            .dne-status--pending {
+                color: #d63638;
+                font-weight: 600;
+            }
+            @media (min-width: 960px) {
+                .dne-panel-grid {
+                    display: grid;
+                    gap: 24px;
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                }
+                .dne-panel-grid .dne-panel {
+                    margin-top: 0;
+                }
+            }
+            @media (min-width: 1280px) {
+                .dne-panel-grid {
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                }
+                .dne-panel-grid .dne-panel--full {
+                    grid-column: 1 / -1;
+                }
             }
         </style>
-        <div class="wrap">
+        <div class="wrap dne-admin-wrap">
             <h1><?php echo esc_html__('Deal Notification Engine', 'deal-notification-engine'); ?></h1>
 
             <div class="notice notice-info">
                 <p><?php echo esc_html__('Notification system is active. Configure settings below.', 'deal-notification-engine'); ?></p>
             </div>
 
-            <div class="card-custom card">
+            <div class="card dne-panel">
                 <h2><?php echo esc_html__('User Gating Overview', 'deal-notification-engine'); ?></h2>
                 <p><?php echo esc_html__('Snapshot of active users and their effective notification gating.', 'deal-notification-engine'); ?></p>
                 <?php
-                // Fetch users with notifications enabled
-                $users = get_users([
-                    'meta_key'   => 'notifications_enabled',
-                    'meta_value' => '1',
-                    'fields'     => 'all',
-                    'number'     => 200, // soft cap for performance
+                // Fetch a snapshot of users with notifications enabled
+                $user_query = new \WP_User_Query([
+                    'meta_key'    => 'notifications_enabled',
+                    'meta_value'  => '1',
+                    'fields'      => 'all',
+                    'number'      => 5,
+                    'orderby'     => 'display_name',
+                    'order'       => 'ASC',
+                    'count_total' => true,
                 ]);
 
+                $users = $user_query->get_results();
+                $total_users = isset($user_query->total_users) ? (int) $user_query->total_users : count($users);
+
                 if (!empty($users)) {
+                    echo '<div class="dne-table-wrap">';
                     echo '<table class="wp-list-table widefat fixed striped">';
                     echo '<thead><tr>
                             <th>' . esc_html__('User', 'deal-notification-engine') . '</th>
@@ -277,14 +387,26 @@ class Plugin
                     }
 
                     echo '</tbody></table>';
+                    echo '</div>';
+                    if ($total_users > count($users)) {
+                        $more_count = $total_users - count($users);
+                        echo "<p class=\"description\" style=\"margin-top:10px;\">" . sprintf(
+                            esc_html__('Showing the latest %1$s users with notifications enabled. %2$s more users available in the full view.', 'deal-notification-engine'),
+                            number_format_i18n(count($users)),
+                            number_format_i18n($more_count)
+                        ) . '</p>';
+                    }
+                    echo "<div class=\"dne-action-bar\" style=\"margin-top: 12px;\">";
+                    echo "<a href=\"" . esc_url(admin_url('admin.php?page=deal-notifications-gating')) . "\" class=\"button button-secondary\">" . esc_html__('View full user gating', 'deal-notification-engine') . '</a>';
+                    echo '</div>';
                 } else {
-                    echo '<p>' . esc_html__('No users with notifications enabled.', 'deal-notification-engine') . '</p>';
+                    echo '<p class="dne-empty">' . esc_html__('No users with notifications enabled.', 'deal-notification-engine') . '</p>';
                 }
                 ?>
             </div>
 
             <!-- User Feedback Section -->
-            <div class="card-custom card">
+            <div class="card dne-panel">
                 <h2><?php echo esc_html__('User Feedback Collection', 'deal-notification-engine'); ?></h2>
                 <p><?php echo esc_html__('Feedback submissions from users about the notification system. Use this data to improve the plugin experience.', 'deal-notification-engine'); ?></p>
                 
@@ -337,16 +459,17 @@ class Plugin
                     echo '</div>';
                     
                     if ($recent_feedback) {
-                        echo '<div style="margin-bottom: 10px;">';
-                        echo '<strong>Recent Feedback:</strong>';
-                        echo '<button type="button" onclick="if(confirm(\'Mark all feedback as reviewed?\')) { 
-                                jQuery.post(ajaxurl, {action: \'dne_mark_all_reviewed\'}, function() { location.reload(); }); }" 
-                                class="button button-secondary" style="float: right; margin-left: 10px;">Mark All as Reviewed</button>';
+                        echo '<div class="dne-action-bar">';
+                        echo '<strong class="dne-action-bar__title">' . esc_html__('Recent Feedback', 'deal-notification-engine') . '</strong>';
                         echo '<button type="button" onclick="if(confirm(\'Export all feedback as CSV?\')) { 
                                 window.open(\'?page=deal-notifications&export_feedback=1\'); }" 
-                                class="button button-secondary" style="float: right;">Export CSV</button>';
+                                class="button button-secondary">' . esc_html__('Export CSV', 'deal-notification-engine') . '</button>';
+                        echo '<button type="button" onclick="if(confirm(\'Mark all feedback as reviewed?\')) { 
+                                jQuery.post(ajaxurl, {action: \'dne_mark_all_reviewed\'}, function() { location.reload(); }); }" 
+                                class="button button-secondary">' . esc_html__('Mark All as Reviewed', 'deal-notification-engine') . '</button>';
                         echo '</div>';
                         
+                        echo '<div class="dne-table-wrap">';
                         echo '<table class="wp-list-table widefat fixed striped">';
                         echo '<thead><tr>
                                 <th style="width: 15%;">User</th>
@@ -365,29 +488,32 @@ class Plugin
                                 'question' => '❓'
                             ][$feedback->type] ?? '📝';
                             
-                            $status_color = $feedback->status === 'pending' ? '#d63638' : '#666';
-                            $row_style = $feedback->status === 'pending' ? 'background: #fff8e1;' : '';
-                            
-                            echo '<tr style="' . $row_style . '">';
+                            $is_pending = $feedback->status === 'pending';
+                            $row_class = $is_pending ? ' class="dne-feedback-row dne-feedback-row--pending"' : '';
+                            $status_class = $is_pending ? 'dne-status dne-status--pending' : 'dne-status';
+
+                            echo '<tr' . $row_class . '>';
                             echo '<td>' . esc_html($user_name) . '</td>';
                             echo '<td>' . $type_emoji . ' ' . esc_html(ucfirst($feedback->type)) . '</td>';
                             echo '<td>' . esc_html($feedback->message) . '</td>';
-                            echo '<td><span style="color: ' . $status_color . ';">' . esc_html(ucfirst($feedback->status)) . '</span></td>';
+                            echo '<td><span class="' . esc_attr($status_class) . '">' . esc_html(ucfirst($feedback->status)) . '</span></td>';
                             echo '<td>' . esc_html(date('M j, Y', strtotime($feedback->created_at))) . '</td>';
                             echo '</tr>';
                         }
                         
                         echo '</tbody></table>';
+                        echo '</div>';
                     } else {
-                        echo '<p>' . esc_html__('No feedback submissions yet.', 'deal-notification-engine') . '</p>';
+                        echo '<p class="dne-empty">' . esc_html__('No feedback submissions yet.', 'deal-notification-engine') . '</p>';
                     }
                 } else {
-                    echo '<p>' . esc_html__('Feedback table not created yet. Please deactivate and reactivate the plugin.', 'deal-notification-engine') . '</p>';
+                    echo '<p class="dne-empty">' . esc_html__('Feedback table not created yet. Please deactivate and reactivate the plugin.', 'deal-notification-engine') . '</p>';
                 }
                 ?>
             </div>
 
-            <div class="card-custom card">
+            <div class="dne-panel-grid">
+            <div class="card dne-panel">
                 <h2><?php echo esc_html__('Statistics', 'deal-notification-engine'); ?></h2>
                 <?php
                 global $wpdb;
@@ -403,12 +529,12 @@ class Plugin
                     <p><strong>Sent Today:</strong> <?php echo intval($sent_today); ?></p>
                 <?php
                 } else {
-                    echo '<p>' . esc_html__('Database tables not yet created. Please deactivate and reactivate the plugin.', 'deal-notification-engine') . '</p>';
+                    echo '<p class="dne-empty">' . esc_html__('Database tables not yet created. Please deactivate and reactivate the plugin.', 'deal-notification-engine') . '</p>';
                 }
                 ?>
             </div>
 
-            <div class="card-custom card">
+            <div class="card dne-panel">
                 <h2><?php echo esc_html__('Test Notification', 'deal-notification-engine'); ?></h2>
                 <p><?php echo esc_html__('Send a test notification to verify everything is working.', 'deal-notification-engine'); ?></p>
 
@@ -468,9 +594,9 @@ class Plugin
                 </p>
             </div>
 
-            <div class="card-custom card">
+            <div class="card dne-panel dne-panel--full">
                 <h2><?php echo esc_html__('Quick Actions', 'deal-notification-engine'); ?></h2>
-                <p>
+                <div class="dne-action-bar">
                     <a href="<?php echo admin_url('admin.php?page=deal-notifications-settings'); ?>" class="button button-primary">
                         <?php echo esc_html__('Configure Settings', 'deal-notification-engine'); ?>
                     </a>
@@ -489,10 +615,11 @@ class Plugin
                     <button type="button" class="button button-secondary" style="background: #dc3545; border-color: #dc3545; color: white;" onclick="if(confirm('DANGER: This will permanently delete ALL notifications from the queue. Are you sure?')) { jQuery.post(ajaxurl, {action: 'dne_clear_all_notifications'}, function(r) { alert(r.data || 'Cleared'); location.reload(); }); }">
                         <?php echo esc_html__('Clear All Queue', 'deal-notification-engine'); ?>
                     </button>
-                </p>
+                </div>
+            </div>
             </div>
 
-            <div class="card-custom card">
+            <div class="card dne-panel">
                 <h2><?php echo esc_html__('Recent Notification Log', 'deal-notification-engine'); ?></h2>
                 <?php
                 if ($wpdb->get_var("SHOW TABLES LIKE '$table_log'") === $table_log) {
@@ -538,7 +665,7 @@ class Plugin
                             if ($detailText !== '') {
                                 // Truncate long text for table view
                                 if (mb_strlen($detailText) > 160) {
-                                    $detailText = mb_substr($detailText, 0, 157) . '...';
+                                    $detailText = mb_substr($detailText, 0, 157) . '…';
                                 }
                             }
                             echo '<td>' . esc_html($detailText) . '</td>';
@@ -547,14 +674,86 @@ class Plugin
                         }
 
                         echo '</tbody></table>';
+                        echo '</div>';
+                        echo "<div class=\"dne-action-bar\" style=\"margin-top: 12px;\">";
+                        echo "<a href=\"" . esc_url(admin_url('admin.php?page=deal-notifications-log')) . "\" class=\"button button-secondary\">" . esc_html__('View full notification log', 'deal-notification-engine') . '</a>';
+                        echo '</div>';
                     } else {
-                        echo '<p>No notifications sent yet.</p>';
+                        echo '<p class="dne-empty">' . esc_html__('No notifications sent yet.', 'deal-notification-engine') . '</p>';
                     }
                 } else {
-                    echo '<p>Log table not created yet.</p>';
+                    echo '<p class="dne-empty">' . esc_html__('Log table not created yet.', 'deal-notification-engine') . '</p>';
                 }
                 ?>
             </div>
+        </div>
+<?php
+    }
+
+    /**
+     * Render full user gating table
+     */
+    public function render_gating_page()
+    {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        $table = new User_Gating_Table();
+        $table->prepare_items();
+
+?>
+        <div class="wrap">
+            <h1><?php echo esc_html__('User Gating Overview', 'deal-notification-engine'); ?></h1>
+            <p class="description"><?php echo esc_html__('Review subscribers, their tiers, and effective delivery methods.', 'deal-notification-engine'); ?></p>
+            <form method="get">
+                <input type="hidden" name="page" value="deal-notifications-gating" />
+                <?php $table->search_box(__('Search users', 'deal-notification-engine'), 'dne-gating-search'); ?>
+                <?php $table->display(); ?>
+            </form>
+        </div>
+<?php
+    }
+
+    /**
+     * Render full notification log table
+     */
+    public function render_log_page()
+    {
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+
+        $table = new Notification_Log_Table();
+        $table->prepare_items();
+        $methods = $table->get_available_methods();
+        $selected_method = $table->current_method();
+
+?>
+        <div class="wrap">
+            <h1><?php echo esc_html__('Notification Log', 'deal-notification-engine'); ?></h1>
+            <p class="description"><?php echo esc_html__('Inspect delivery attempts, statuses, and payload details for each notification.', 'deal-notification-engine'); ?></p>
+            <form method="get">
+                <input type="hidden" name="page" value="deal-notifications-log" />
+                <div class="tablenav top" style="margin-bottom: 10px;">
+                    <div class="alignleft actions">
+                        <?php if (!empty($methods)) : ?>
+                            <label class="screen-reader-text" for="dne-method-filter"><?php echo esc_html__('Filter by method', 'deal-notification-engine'); ?></label>
+                            <select name="method" id="dne-method-filter">
+                                <option value=""><?php echo esc_html__('All methods', 'deal-notification-engine'); ?></option>
+                                <?php foreach ($methods as $method) : ?>
+                                    <option value="<?php echo esc_attr($method); ?>" <?php selected($selected_method, $method); ?>>
+                                        <?php echo esc_html($method); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <input type="submit" class="button" value="<?php echo esc_attr__('Filter', 'deal-notification-engine'); ?>" />
+                        <?php endif; ?>
+                    </div>
+                    <?php $table->search_box(__('Search logs', 'deal-notification-engine'), 'dne-log-search'); ?>
+                </div>
+                <?php $table->display(); ?>
+            </form>
         </div>
 <?php
     }

@@ -187,47 +187,45 @@ class Filter
             return false; // No valid tier
         }
 
-        // Count active filters
-        $filter_count = 0;
+        $discount_selected = isset($preferences['discount_filter']) && $preferences['discount_filter'] !== '';
 
-        if (!empty($preferences['discount_filter'])) {
-            $filter_count++;
-        }
-
+        $category_filter = [];
         if (!empty($preferences['category_filter']) && is_array($preferences['category_filter'])) {
-            $filter_count += count($preferences['category_filter']);
+            $category_filter = array_values(array_filter(array_map('intval', $preferences['category_filter'])));
         }
 
+        $store_filter = [];
         if (!empty($preferences['store_filter']) && is_array($preferences['store_filter'])) {
-            $filter_count += count($preferences['store_filter']);
+            $store_filter = array_values(array_filter(array_map('intval', $preferences['store_filter'])));
         }
 
-        // Check against tier limits
-        $tier_limits = [
-            1 => ['total' => 1, 'categories' => 1, 'stores' => 1],
-            2 => ['total' => 7, 'categories' => 3, 'stores' => 3],  // Updated
-            3 => ['total' => 999, 'categories' => 999, 'stores' => 999]  // Effectively unlimited
-        ];
+        $has_categories = !empty($category_filter);
+        $has_stores = !empty($store_filter);
 
-        $limits = $tier_limits[$tier_level];
+        switch ($tier_level) {
+            case 1:
+                if ($discount_selected && ($has_categories || $has_stores)) {
+                    return false;
+                }
 
-        // Validate total filters
-        if ($filter_count > $limits['total']) {
-            return false;
-        }
+                if ($has_categories && $has_stores) {
+                    return false;
+                }
+                break;
 
-        // Validate category count
-        if (!empty($preferences['category_filter']) && is_array($preferences['category_filter'])) {
-            if (count($preferences['category_filter']) > $limits['categories']) {
-                return false;
-            }
-        }
+            case 2:
+                if ($has_categories && $has_stores) {
+                    return false;
+                }
 
-        // Validate store count
-        if (!empty($preferences['store_filter']) && is_array($preferences['store_filter'])) {
-            if (count($preferences['store_filter']) > $limits['stores']) {
-                return false;
-            }
+                if (!$discount_selected && ($has_categories || $has_stores)) {
+                    return false;
+                }
+                break;
+
+            case 3:
+            default:
+                break;
         }
 
         return true;

@@ -10,6 +10,7 @@ class Telegram
 
     private $bot_token;
     private $bot_username;
+    private $webhook_secret;
 
     /**
      * Constructor
@@ -19,10 +20,15 @@ class Telegram
         // Get bot credentials from database settings
         $this->bot_token = get_option('dne_telegram_bot_token', '');
         $this->bot_username = get_option('dne_telegram_bot_username', 'YourBotName');
+        $this->webhook_secret = get_option('dne_telegram_webhook_secret', '');
 
         // Fall back to wp-config.php if defined there (backwards compatibility)
         if (empty($this->bot_token) && defined('DNE_TELEGRAM_BOT_TOKEN')) {
             $this->bot_token = DNE_TELEGRAM_BOT_TOKEN;
+        }
+
+        if (empty($this->webhook_secret) && defined('DNE_TELEGRAM_WEBHOOK_SECRET')) {
+            $this->webhook_secret = DNE_TELEGRAM_WEBHOOK_SECRET;
         }
     }
 
@@ -55,6 +61,13 @@ class Telegram
      */
     public function handle_webhook($request)
     {
+        if (!empty($this->webhook_secret)) {
+            $incoming_secret = $request->get_header('x-telegram-bot-api-secret-token');
+            if (empty($incoming_secret) || !hash_equals($this->webhook_secret, $incoming_secret)) {
+                return new \WP_REST_Response(['status' => 'forbidden'], 403);
+            }
+        }
+
         $data = $request->get_json_params();
 
         if (!isset($data['message'])) {

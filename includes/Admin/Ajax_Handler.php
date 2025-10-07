@@ -596,43 +596,49 @@ class Ajax_Handler
         // Keep only channels allowed for this tier
         $delivery = array_values(array_intersect($delivery, $allowed_by_tier));
 
-        // Same limits as filter.php
-        $tier_limits = [
-            1 => ['total' => 1, 'categories' => 1, 'stores' => 1],
-            2 => ['total' => 7, 'categories' => 3, 'stores' => 3],
-            3 => ['total' => 999, 'categories' => 999, 'stores' => 999],
-        ];
-        $limits = $tier_limits[$tier_level];
 
         // De-dup & normalize
         $valid_categories = array_values(array_unique($valid_categories));
         $valid_stores     = array_values(array_unique($valid_stores));
 
-        // Bucket caps first
-        if (count($valid_categories) > $limits['categories']) {
-            $valid_categories = array_slice($valid_categories, 0, $limits['categories']);
-        }
-        if (count($valid_stores) > $limits['stores']) {
-            $valid_stores = array_slice($valid_stores, 0, $limits['stores']);
+        $discount_selected = $discount > 0;
+        $has_categories = !empty($valid_categories);
+        $has_stores = !empty($valid_stores);
+
+        switch ($tier_level) {
+            case 1:
+                if ($discount_selected) {
+                    $valid_categories = [];
+                    $valid_stores = [];
+                } elseif ($has_categories && $has_stores) {
+                    // Prefer categories by default, drop stores
+                    $valid_stores = [];
+                }
+                break;
+
+            case 2:
+                if ($has_categories && $has_stores) {
+                    // Prefer categories by default, drop stores
+                    $valid_stores = [];
+                    $has_stores = false;
+                }
+
+                if (!$discount_selected && ($has_categories || $has_stores)) {
+                    // Discount required when using category/store filters
+                    $valid_categories = [];
+                    $valid_stores = [];
+                }
+                break;
+
+            case 3:
+            default:
+                // No additional limits
+                break;
         }
 
-        // Compute "total filters" where discount counts as 1 if set
-        $filter_count = ($discount > 0 ? 1 : 0) + count($valid_categories) + count($valid_stores);
-
-        // If over total, trim stores first, then categories, then discount last
-        while ($filter_count > $limits['total'] && !empty($valid_stores)) {
-            array_pop($valid_stores);
-            $filter_count--;
-        }
-        while ($filter_count > $limits['total'] && !empty($valid_categories)) {
-            array_pop($valid_categories);
-            $filter_count--;
-        }
-        if ($filter_count > $limits['total'] && $discount > 0) {
+        if (!$discount_selected) {
             $discount = 0;
-            $filter_count--;
         }
-
         // Persist
         update_user_meta($user_id, 'notifications_enabled', $enabled);
         update_user_meta($user_id, 'notification_delivery_methods', $delivery);
@@ -865,3 +871,4 @@ class Ajax_Handler
         wp_send_json_success($message);
     }
 }
+

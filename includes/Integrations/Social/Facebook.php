@@ -114,6 +114,6 @@ class Facebook
         if (strpos($out, '{discount}') === false && !empty($vars['discount'])) {
             $out = intval($vars['discount']) . "% OFF\n" . $out;
         }
-        return $out;
+        return Template_Normalizer::to_plain_text($out);
     }
 }

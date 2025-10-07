@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Deal Notification Engine - Frontend JavaScript
  * OneSignal SDK v16 Complete Fix with Cleanup
  */
@@ -37,6 +37,8 @@ jQuery(document).ready(function ($) {
   // Capture initial state
   captureInitialState();
 
+  var LAST_CHANGED_FIELD = null;
+
   var tierLevel =
     window.dne_ajax && dne_ajax.tier_level
       ? parseInt(dne_ajax.tier_level, 10)
@@ -55,22 +57,18 @@ jQuery(document).ready(function ($) {
     else tierLevel = 3;
   }
 
-  // Align with server Filter::validate_tier_limits()
-  var tierLimits = {
-    1: { total: 1, categories: 1, stores: 1 },
-    2: { total: 7, categories: 3, stores: 3 },
-    3: { total: 999, categories: 999, stores: 999 },
-  };
-
   function getMultiVal($sel) {
     // Works with native and Select2.
     var v = $sel.val();
     return Array.isArray(v) ? v : v ? [v] : [];
   }
 
-  function clampArray(arr, max) {
-    arr = Array.from(new Set(arr)); // unique
-    return arr.length > max ? arr.slice(0, max) : arr;
+  function arraysEqual(a, b) {
+    if (a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i += 1) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
   }
 
   function showTierWarning(message) {
@@ -87,7 +85,7 @@ jQuery(document).ready(function ($) {
       );
       $container.prepend($warning);
     }
-    $warning.html("<strong>⚠ Tier limit:</strong> " + message).show();
+    $warning.html("<strong>Tier limit:</strong> " + message).show();
   }
   function hideTierWarning() {
     $("#tier-warning").hide();
@@ -95,8 +93,6 @@ jQuery(document).ready(function ($) {
 
   // Auto-enforce (clamp) + warn
   function enforceTierLimits() {
-    var limits = tierLimits[tierLevel] || tierLimits[3];
-
     var $discount = $("#user_discount_filter");
     var $cats = $("#user_category_filter");
     var $stores = $("#user_store_filter");
@@ -106,84 +102,119 @@ jQuery(document).ready(function ($) {
     );
     var cats = getMultiVal($cats);
     var stores = getMultiVal($stores);
-
-    // Per-bucket clamping
-    var clampedCats = clampArray(cats, limits.categories);
-    var clampedStores = clampArray(stores, limits.stores);
-
-    var changed =
-      clampedCats.length !== cats.length ||
-      clampedStores.length !== stores.length;
-
-    // Recalculate total (discount counts as 1 if present)
-    var total =
-      (hasDiscount ? 1 : 0) + clampedCats.length + clampedStores.length;
-
-    // If over total limit, drop newest from stores first, then categories, then discount last.
-    function dropLast(list) {
-      list.pop();
-      return list;
-    }
-
+    var desiredCats = cats.slice();
+    var desiredStores = stores.slice();
+    var desiredDiscount = hasDiscount ? $discount.val() : '';
     var messages = [];
-    if (clampedCats.length < cats.length)
-      messages.push("Max " + limits.categories + " categories for your tier.");
-    if (clampedStores.length < stores.length)
-      messages.push("Max " + limits.stores + " stores for your tier.");
 
-    while (total > limits.total && clampedStores.length) {
-      dropLast(clampedStores);
-      total--;
-      changed = true;
-      if (
-        !messages.includes(
-          "Max total selections is " + limits.total + " for your tier."
-        )
-      )
-        messages.push(
-          "Max total selections is " + limits.total + " for your tier."
-        );
-    }
-    while (total > limits.total && clampedCats.length) {
-      dropLast(clampedCats);
-      total--;
-      changed = true;
-      if (
-        !messages.includes(
-          "Max total selections is " + limits.total + " for your tier."
-        )
-      )
-        messages.push(
-          "Max total selections is " + limits.total + " for your tier."
-        );
-    }
-    if (total > limits.total && hasDiscount) {
-      $discount.val("");
-      hasDiscount = false;
-      total--;
-      changed = true;
-      if (
-        !messages.includes(
-          "Max total selections is " + limits.total + " for your tier."
-        )
-      )
-        messages.push(
-          "Max total selections is " + limits.total + " for your tier."
-        );
+    function clearCategories() {
+      if (desiredCats.length) {
+        desiredCats = [];
+        messages.push("Tier limit: categories cannot be used with your other selections.");
+      }
     }
 
-    if (changed) {
+    function clearStores() {
+      if (desiredStores.length) {
+        desiredStores = [];
+        messages.push("Tier limit: stores cannot be used with your other selections.");
+      }
+    }
+
+    function clearDiscount() {
+      if (desiredDiscount !== '') {
+        desiredDiscount = '';
+        messages.push("Tier limit: discount cannot be combined with your other selections.");
+      }
+    }
+
+    function warn(message) {
+      if (!messages.includes(message)) {
+        messages.push(message);
+      }
+    }
+
+    switch (tierLevel) {
+      case 1:
+        if (desiredDiscount !== '' && (desiredCats.length || desiredStores.length)) {
+          if (LAST_CHANGED_FIELD === 'user_discount_filter') {
+            clearCategories();
+            clearStores();
+          } else {
+            clearDiscount();
+          }
+          warn('Tier 1 allows discount or categories or stores (pick one type).');
+        }
+
+        if (desiredCats.length && desiredStores.length) {
+          if (LAST_CHANGED_FIELD === 'user_store_filter') {
+            clearCategories();
+            warn('Tier 1 allows either categories or stores, not both.');
+          } else {
+            clearStores();
+            warn('Tier 1 allows either categories or stores, not both.');
+          }
+        }
+        break;
+
+      case 2:
+        if (desiredCats.length && desiredStores.length) {
+          if (LAST_CHANGED_FIELD === 'user_store_filter') {
+            clearCategories();
+          } else {
+            clearStores();
+          }
+          warn('Tier 2 allows discount plus categories or discount plus stores. Choose only one set.');
+        }
+
+        if (desiredDiscount === '' && (desiredCats.length || desiredStores.length)) {
+          if (LAST_CHANGED_FIELD === 'user_discount_filter') {
+            clearCategories();
+            clearStores();
+          } else if (LAST_CHANGED_FIELD === 'user_category_filter') {
+            clearCategories();
+          } else if (LAST_CHANGED_FIELD === 'user_store_filter') {
+            clearStores();
+          } else {
+            clearCategories();
+            clearStores();
+          }
+          warn('Tier 2 requires adding a discount when choosing categories or stores.');
+        }
+        break;
+
+      default:
+        break;
+    }
+
+    var changed = false;
+
+    if (!arraysEqual(desiredCats, cats)) {
+      changed = true;
       DNE_ENFORCING = true;
-      $cats.val(clampedCats).trigger("change.select2");
-      $stores.val(clampedStores).trigger("change.select2");
+      $cats.val(desiredCats).trigger('change.select2');
       DNE_ENFORCING = false;
     }
 
-    if (messages.length) showTierWarning(messages.join(" "));
-    else hideTierWarning();
+    if (!arraysEqual(desiredStores, stores)) {
+      changed = true;
+      DNE_ENFORCING = true;
+      $stores.val(desiredStores).trigger('change.select2');
+      DNE_ENFORCING = false;
+    }
 
-    // Return whether state is valid (never blocks submit because we self-clamp)
-    return true;
+    if (desiredDiscount === '' && $discount.val()) {
+      changed = true;
+      $discount.val('');
+    }
+
+    if (messages.length) {
+      showTierWarning(messages.join(' '));
+    } else {
+      hideTierWarning();
+    }
+
+    return !changed;
   }
 
   // Wire up on input/selection changes
@@ -191,9 +222,12 @@ jQuery(document).ready(function ($) {
     "change input",
     function () {
       if (DNE_ENFORCING) return;
+      LAST_CHANGED_FIELD = this.id || null;
       enforceTierLimits();
     }
   );
+
+  enforceTierLimits();
 
   // Also enforce right before save button fires (in case user pasted values etc.)
   $(document).on(
@@ -683,7 +717,7 @@ jQuery(document).ready(function ($) {
       var statusHtml =
         '<div id="webpush-connection-status" style="margin-top: 10px; margin-left: 28px;">' +
         '<div style="color: #28a745; font-size: 14px;">' +
-        "✓ Browser push connected successfully" +
+        "Browser push connected successfully" +
         '<button type="button" id="disconnect-webpush" style="margin-left: 10px; font-size: 12px; background: #dc3545; color: white; border: none; padding: 2px 8px; border-radius: 3px; cursor: pointer;">' +
         "Disconnect" +
         "</button>" +
@@ -752,13 +786,13 @@ jQuery(document).ready(function ($) {
       if (chan === "email") {
         showNotice(
           "info",
-          "Email disabled (pending) — click Save to apply."
+          "Email disabled (pending) click Save to apply."
         );
       }
       if (chan === "telegram") {
         showNotice(
           "info",
-          "Telegram notifications disabled. You will no longer receive Telegram messages. (Disconnect is optional—use it only to revoke the bot.)"
+          "Telegram notifications disabled. You will no longer receive Telegram messages. (Disconnect is optional use it only to revoke the bot.)"
         );
       }
     }
